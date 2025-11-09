@@ -191,55 +191,121 @@ def add_range_arguments(parser):
     )
 
 
+def _parse_and_normalize_series(series_spec, root, verbose, logger):
+    """
+    Parse, normalize, and resolve series specification.
+
+    Handles full paths, prefixes, and series UIDs, performing prefix search if needed.
+
+    Args:
+        series_spec: Series specification (UID, prefix, or full path)
+        root: Default root path
+        verbose: Whether to log verbose output
+        logger: Logger instance
+
+    Returns:
+        Tuple of (root_path, series_uid) on success
+        None on error (error already logged)
+    """
+    # Parse series specification (can be UID or full path)
+    try:
+        root_path, parsed_spec = parse_series_specification(series_spec, root)
+
+        # If a full path was provided and --root was also specified, note the override
+        if root_path != root and verbose:
+            logger.info(f"Full path specified, overriding --root with: {root_path}")
+    except ValueError as e:
+        logger.error(f"Invalid series specification: {e}")
+        return None
+
+    # Normalize series UID (add hyphens if not present, or prepare for prefix search)
+    try:
+        series_uid = normalize_series_uid(parsed_spec)
+    except ValueError as e:
+        logger.error(f"Invalid series UID: {e}")
+        return None
+
+    # Handle prefix search (ends with *)
+    if series_uid.endswith('*'):
+        if verbose:
+            logger.info(f"Searching for series matching prefix: {parsed_spec}...")
+
+        retriever_temp = DICOMRetriever(root_path)
+        prefix = series_uid.rstrip('*')
+        matches = retriever_temp.find_series_by_prefix(prefix)
+
+        if not matches:
+            logger.error(f"No series found matching prefix: {parsed_spec}")
+            return None
+        elif len(matches) > 1:
+            logger.error(f"Prefix '{parsed_spec}' matches {len(matches)} series:")
+            for match in matches[:10]:  # Show first 10
+                logger.error(f"  - {match}")
+            if len(matches) > 10:
+                logger.error(f"  ... and {len(matches) - 10} more")
+            logger.error("Please provide a more specific prefix")
+            return None
+        else:
+            series_uid = matches[0]
+            if verbose:
+                logger.info(f"Found matching series: {series_uid}")
+
+    return root_path, series_uid
+
+
+def _validate_output_format(output_path):
+    """
+    Validate output file format.
+
+    Args:
+        output_path: Path object for output file
+
+    Returns:
+        True if valid, False otherwise
+    """
+    return output_path.suffix.lower() in ['.webp', '.jpg', '.jpeg']
+
+
+def _get_window_settings_from_args(args):
+    """
+    Extract window/center settings from command-line arguments.
+
+    Supports:
+    - Contrast preset (lung, bone, brain, etc.)
+    - Manual window width and center
+    - Auto-detection ("auto")
+
+    Args:
+        args: Parsed command-line arguments
+
+    Returns:
+        Window settings dict, "auto" string, or None
+    """
+    if args.contrast_preset:
+        if args.contrast_preset == "auto":
+            return "auto"
+        else:
+            return ContrastPresets.get_preset(args.contrast_preset)
+    elif args.window_width and args.window_center:
+        return {
+            'window_width': args.window_width,
+            'window_center': args.window_center
+        }
+    return None
+
+
 def mosaic_command(args, logger):
     """Generate a tiled mosaic from a DICOM series."""
     try:
-        # Parse series specification (can be UID or full path)
-        try:
-            root_path, series_spec = parse_series_specification(args.seriesuid, args.root)
-
-            # If a full path was provided and --root was also specified, note the override
-            if root_path != args.root and args.verbose:
-                logger.info(f"Full path specified, overriding --root with: {root_path}")
-        except ValueError as e:
-            logger.error(f"Invalid series specification: {e}")
+        # Parse and normalize series specification
+        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
+        if result is None:
             return 1
-
-        # Normalize series UID (add hyphens if not present, or prepare for prefix search)
-        try:
-            series_uid = normalize_series_uid(series_spec)
-        except ValueError as e:
-            logger.error(f"Invalid series UID: {e}")
-            return 1
-
-        # Handle prefix search (ends with *)
-        if series_uid.endswith('*'):
-            if args.verbose:
-                logger.info(f"Searching for series matching prefix: {series_spec}...")
-
-            retriever_temp = DICOMRetriever(root_path)
-            prefix = series_uid.rstrip('*')
-            matches = retriever_temp.find_series_by_prefix(prefix)
-
-            if not matches:
-                logger.error(f"No series found matching prefix: {series_spec}")
-                return 1
-            elif len(matches) > 1:
-                logger.error(f"Prefix '{series_spec}' matches {len(matches)} series:")
-                for match in matches[:10]:  # Show first 10
-                    logger.error(f"  - {match}")
-                if len(matches) > 10:
-                    logger.error(f"  ... and {len(matches) - 10} more")
-                logger.error("Please provide a more specific prefix")
-                return 1
-            else:
-                series_uid = matches[0]
-                if args.verbose:
-                    logger.info(f"Found matching series: {series_uid}")
+        root_path, series_uid = result
 
         # Validate output format
         output_path = Path(args.output)
-        if output_path.suffix.lower() not in ['.webp', '.jpg', '.jpeg']:
+        if not _validate_output_format(output_path):
             logger.error("Output file must be .webp or .jpg/.jpeg")
             return 1
 
@@ -258,17 +324,7 @@ def mosaic_command(args, logger):
         tile_height = args.tile_height if args.tile_height else args.tile_width
 
         # Get window/center settings
-        window_settings = None
-        if args.contrast_preset:
-            if args.contrast_preset == "auto":
-                window_settings = "auto"
-            else:
-                window_settings = ContrastPresets.get_preset(args.contrast_preset)
-        elif args.window_width and args.window_center:
-            window_settings = {
-                'window_width': args.window_width,
-                'window_center': args.window_center
-            }
+        window_settings = _get_window_settings_from_args(args)
 
         if args.verbose:
             logger.info(f"Generating DICOM series mosaic")
@@ -336,52 +392,15 @@ def mosaic_command(args, logger):
 def image_command(args, logger):
     """Extract a single image from a DICOM series at a specific position."""
     try:
-        # Parse series specification (can be UID or full path)
-        try:
-            root_path, series_spec = parse_series_specification(args.seriesuid, args.root)
-
-            # If a full path was provided and --root was also specified, note the override
-            if root_path != args.root and args.verbose:
-                logger.info(f"Full path specified, overriding --root with: {root_path}")
-        except ValueError as e:
-            logger.error(f"Invalid series specification: {e}")
+        # Parse and normalize series specification
+        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
+        if result is None:
             return 1
-
-        # Normalize series UID (add hyphens if not present, or prepare for prefix search)
-        try:
-            series_uid = normalize_series_uid(series_spec)
-        except ValueError as e:
-            logger.error(f"Invalid series UID: {e}")
-            return 1
-
-        # Handle prefix search (ends with *)
-        if series_uid.endswith('*'):
-            if args.verbose:
-                logger.info(f"Searching for series matching prefix: {series_spec}...")
-
-            retriever_temp = DICOMRetriever(root_path)
-            prefix = series_uid.rstrip('*')
-            matches = retriever_temp.find_series_by_prefix(prefix)
-
-            if not matches:
-                logger.error(f"No series found matching prefix: {series_spec}")
-                return 1
-            elif len(matches) > 1:
-                logger.error(f"Prefix '{series_spec}' matches {len(matches)} series:")
-                for match in matches[:10]:  # Show first 10
-                    logger.error(f"  - {match}")
-                if len(matches) > 10:
-                    logger.error(f"  ... and {len(matches) - 10} more")
-                logger.error("Please provide a more specific prefix")
-                return 1
-            else:
-                series_uid = matches[0]
-                if args.verbose:
-                    logger.info(f"Found matching series: {series_uid}")
+        root_path, series_uid = result
 
         # Validate output format
         output_path = Path(args.output)
-        if output_path.suffix.lower() not in ['.webp', '.jpg', '.jpeg']:
+        if not _validate_output_format(output_path):
             logger.error("Output file must be .webp or .jpg/.jpeg")
             return 1
 
@@ -396,17 +415,7 @@ def image_command(args, logger):
                 logger.info(f"Will apply slice offset: {args.slice_offset}")
 
         # Get window/center settings
-        window_settings = None
-        if args.contrast_preset:
-            if args.contrast_preset == "auto":
-                window_settings = "auto"
-            else:
-                window_settings = ContrastPresets.get_preset(args.contrast_preset)
-        elif args.window_width and args.window_center:
-            window_settings = {
-                'window_width': args.window_width,
-                'window_center': args.window_center
-            }
+        window_settings = _get_window_settings_from_args(args)
 
         if args.verbose:
             logger.info(f"Extracting single image from DICOM series")
