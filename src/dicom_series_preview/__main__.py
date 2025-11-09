@@ -476,16 +476,13 @@ def image_command(args, logger):
         return 1
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization.",
-        prog="dicom-series-preview"
-    )
+def _setup_mosaic_subcommand(subparsers):
+    """
+    Setup mosaic subcommand with all its arguments.
 
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-    subparsers.required = True
-
-    # Mosaic subcommand
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
     mosaic_parser = subparsers.add_parser(
         "mosaic",
         help="Generate a tiled mosaic grid from a DICOM series"
@@ -505,7 +502,14 @@ def main():
     )
     mosaic_parser.set_defaults(func=mosaic_command)
 
-    # Image subcommand
+
+def _setup_image_subcommand(subparsers):
+    """
+    Setup image subcommand with all its arguments.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
     image_parser = subparsers.add_parser(
         "image",
         help="Extract a single image from a DICOM series at a specific position"
@@ -525,6 +529,31 @@ def main():
     )
     image_parser.set_defaults(func=image_command)
 
+
+def _setup_parser():
+    """
+    Setup and configure the main argument parser with all subcommands.
+
+    Returns:
+        Configured ArgumentParser with mosaic and image subcommands
+    """
+    parser = argparse.ArgumentParser(
+        description="Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization.",
+        prog="dicom-series-preview"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    subparsers.required = True
+
+    # Setup subcommands
+    _setup_mosaic_subcommand(subparsers)
+    _setup_image_subcommand(subparsers)
+
+    return parser
+
+
+def main():
+    parser = _setup_parser()
     args = parser.parse_args()
 
     setup_logging(args.verbose)
