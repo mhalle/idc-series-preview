@@ -161,7 +161,7 @@ def main():
             window_settings=window_settings
         )
 
-        mosaic_image = generator.create_mosaic(instances)
+        mosaic_image = generator.create_mosaic(instances, retriever, args.seriesuid)
 
         if not mosaic_image:
             logger.error("Failed to generate mosaic")

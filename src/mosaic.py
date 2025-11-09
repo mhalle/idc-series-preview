@@ -137,13 +137,15 @@ class MosaicGenerator:
         return img.resize((self.image_width, new_height), Image.Resampling.LANCZOS)
 
     def create_mosaic(
-        self, instances: List[Tuple[str, pydicom.Dataset]]
+        self, instances: List[Tuple[str, pydicom.Dataset]], retriever=None, series_uid=None
     ) -> Optional[Image.Image]:
         """
         Create a mosaic from DICOM instances.
 
         Args:
             instances: List of (instance_uid, pydicom.Dataset) tuples
+            retriever: Optional DICOMRetriever for fetching full instance data when headers only are present
+            series_uid: Series UID for fetching full instance data
 
         Returns:
             PIL Image of the mosaic, or None if creation failed
@@ -157,6 +159,15 @@ class MosaicGenerator:
         for instance_uid, ds in instances:
             try:
                 pixel_array = self._extract_pixel_array(ds)
+
+                # If no pixel data and we have a retriever, fetch full instance
+                if pixel_array is None and retriever and series_uid:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Fetching full instance data for {instance_uid}")
+                    ds_full = retriever.get_instance_data(series_uid, instance_uid)
+                    if ds_full:
+                        pixel_array = self._extract_pixel_array(ds_full)
+
                 if pixel_array is None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Skipping {instance_uid} - no pixel data")

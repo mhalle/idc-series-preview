@@ -56,24 +56,37 @@ class DICOMRetriever:
 
             # Try initial range request
             try:
-                data = self.store.get_range(path, 0, max_bytes)
+                range_result = self.store.get_range(path, start=0, length=max_bytes)
+                # get_range returns obstore.Bytes directly
+                data = bytes(range_result) if hasattr(range_result, '__len__') else bytes(range_result.bytes())
             except Exception as e:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Initial range request failed for {path}, trying larger range: {e}")
                 # Fall back to larger range
-                data = self.store.get_range(path, 0, 20000)
+                range_result = self.store.get_range(path, start=0, length=20000)
+                data = bytes(range_result) if hasattr(range_result, '__len__') else bytes(range_result.bytes())
 
             # Parse DICOM headers
             try:
-                ds = pydicom.dcmread(BytesIO(data), stop_before_pixels=True)
+                ds = pydicom.dcmread(BytesIO(data), stop_before_pixels=True, force=True)
                 # Get file size from metadata if available
                 meta_data = self.store.head(path)
-                size = meta_data.size
+                size = meta_data.get('size') if isinstance(meta_data, dict) else meta_data.size
                 return ds, size
             except Exception as e:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Failed to parse DICOM headers for {path}: {e}")
-                return None, 0
+                # Try retrieving full file as fallback
+                try:
+                    result = self.store.get(path)
+                    # GetResult.bytes() returns obstore.Bytes which can be converted to bytes
+                    full_data = bytes(result.bytes())
+                    ds = pydicom.dcmread(BytesIO(full_data), stop_before_pixels=True, force=True)
+                    return ds, len(full_data)
+                except Exception as e2:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Failed to parse full DICOM file for {path}: {e2}")
+                    return None, 0
 
         except Exception as e:
             logger.error(f"Error retrieving instance headers {series_uid}/{instance_uid}: {e}")
@@ -94,13 +107,23 @@ class DICOMRetriever:
             results = self.store.list(series_uid)
             instances = []
 
-            for obj in results:
-                # obj has 'name' attribute with the path
-                name = obj.name if hasattr(obj, 'name') else str(obj)
-                if name.endswith('.dcm'):
-                    # Extract just the filename without the series UID prefix
-                    instance_uid = name.split('/')[-1].replace('.dcm', '')
-                    instances.append(instance_uid)
+            # obstore.list returns an iterator that yields batches
+            for batch in results:
+                # Each batch is a list of objects
+                if isinstance(batch, list):
+                    for obj in batch:
+                        # Each object is a dict with 'path' key
+                        path = obj.get('path') if isinstance(obj, dict) else str(obj)
+                        if path.endswith('.dcm'):
+                            # Extract just the filename without the series UID prefix
+                            instance_uid = path.split('/')[-1].replace('.dcm', '')
+                            instances.append(instance_uid)
+                else:
+                    # Single object (shouldn't happen with list)
+                    path = batch.get('path') if isinstance(batch, dict) else str(batch)
+                    if path.endswith('.dcm'):
+                        instance_uid = path.split('/')[-1].replace('.dcm', '')
+                        instances.append(instance_uid)
 
             instances.sort()
             return instances
@@ -181,8 +204,10 @@ class DICOMRetriever:
         """
         try:
             path = self._get_instance_path(series_uid, instance_uid)
-            data = self.store.get(path)
-            ds = pydicom.dcmread(BytesIO(data))
+            result = self.store.get(path)
+            # GetResult.bytes() returns obstore.Bytes which can be converted to bytes
+            data = bytes(result.bytes())
+            ds = pydicom.dcmread(BytesIO(data), force=True)
             return ds
 
         except Exception as e:
