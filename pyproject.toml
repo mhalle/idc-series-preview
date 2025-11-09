@@ -45,7 +45,7 @@ gdcm = [
 ]
 
 [project.scripts]
-dicom-mosaic = "dicom_mosaic:main"
+dicom-mosaic = "dicom_mosaic.__main__:main"
 
 [tool.black]
 line-length = 100

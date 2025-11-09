@@ -10,9 +10,9 @@ import sys
 import logging
 from pathlib import Path
 
-from src.retriever import DICOMRetriever
-from src.mosaic import MosaicGenerator
-from src.contrast import ContrastPresets
+from .retriever import DICOMRetriever
+from .mosaic import MosaicGenerator
+from .contrast import ContrastPresets
 
 
 def normalize_series_uid(series_uid: str) -> str:
