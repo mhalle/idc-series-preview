@@ -12,17 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 def _configure_pixel_data_handlers():
-    """Configure pydicom to use gdcm for pixel data if available."""
-    try:
-        # Try to import gdcm to check if it's available
-        import gdcm  # noqa: F401
-        # If gdcm is available, set it as the preferred handler
-        # This ensures JPEG Extended and other advanced codecs can be decoded
-        pydicom.config.settings.pixel_data_handlers = ['gdcm', 'pillow']
-        logger.debug("Configured pydicom to use gdcm for pixel data decoding")
-    except ImportError:
-        # gdcm not available, use default handlers (pillow only)
-        logger.debug("gdcm not available, using default pixel data handlers")
+    """Configure pydicom to use gdcm for pixel data if available.
+
+    Note: gdcm support is disabled until we can test it (not available on macOS ARM64).
+    """
+    # TODO: Enable gdcm support when available on test platform
+    # try:
+    #     # Try to import gdcm to check if it's available
+    #     import gdcm  # noqa: F401
+    #     # If gdcm is available, set it as the preferred handler
+    #     # This ensures JPEG Extended and other advanced codecs can be decoded
+    #     pydicom.config.settings.pixel_data_handlers = ['gdcm', 'pillow']
+    #     logger.debug("Configured pydicom to use gdcm for pixel data decoding")
+    # except ImportError:
+    #     # gdcm not available, use default handlers (pillow only)
+    #     logger.debug("gdcm not available, using default pixel data handlers")
+    pass
 
 
 class DICOMRetriever:
