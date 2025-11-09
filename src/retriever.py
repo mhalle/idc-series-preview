@@ -30,6 +30,40 @@ def _configure_pixel_data_handlers():
     pass
 
 
+def _get_sort_key(item: Tuple[str, pydicom.Dataset]) -> Tuple[float, float]:
+    """
+    Create a sort key for DICOM instances that handles both spatial and temporal ordering.
+
+    For temporal sequences where multiple instances share the same or similar z-position,
+    this function creates a two-level sort key:
+    1. Primary: z-position (spatial location)
+    2. Secondary: instance number (temporal ordering at same location)
+
+    Args:
+        item: Tuple of (instance_uid, pydicom.Dataset)
+
+    Returns:
+        Tuple of (z_position, instance_number) for sorting
+    """
+    instance_uid, ds = item
+
+    # Get z-position (spatial ordering)
+    if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
+        z_position = float(ds.ImagePositionPatient[2])
+    elif hasattr(ds, 'SliceLocation'):
+        z_position = float(ds.SliceLocation)
+    else:
+        z_position = 0.0
+
+    # Get instance number (temporal ordering within same spatial location)
+    if hasattr(ds, 'InstanceNumber'):
+        instance_number = float(ds.InstanceNumber)
+    else:
+        instance_number = 0.0
+
+    return (z_position, instance_number)
+
+
 class DICOMRetriever:
     """Retrieve DICOM instances from S3, HTTP, or local storage."""
 
@@ -286,23 +320,14 @@ class DICOMRetriever:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Retrieved headers for {len(all_headers)} instances ({headers_bytes / 1024 / 1024:.2f}MB)")
 
-        # Sort all instances by z-position
-        def get_z_position(item):
-            instance_uid, ds = item
-            if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
-                return float(ds.ImagePositionPatient[2])
-            elif hasattr(ds, 'InstanceNumber'):
-                return float(ds.InstanceNumber)
-            elif hasattr(ds, 'SliceLocation'):
-                return float(ds.SliceLocation)
-            return 0
-
-        sorted_headers = sorted(all_headers, key=get_z_position)
+        # Sort all instances by z-position, then by instance number for temporal sequences
+        sorted_headers = sorted(all_headers, key=_get_sort_key)
 
         # Apply range filtering if not using full range
         if start > 0.0 or end < 1.0:
             if len(sorted_headers) > 0:
-                z_positions = [get_z_position(item) for item in sorted_headers]
+                # Extract z-positions for range calculation
+                z_positions = [_get_sort_key(item)[0] for item in sorted_headers]
                 min_z = min(z_positions)
                 max_z = max(z_positions)
                 z_range = max_z - min_z
@@ -314,7 +339,7 @@ class DICOMRetriever:
                 # Filter instances within the range (inclusive on both ends)
                 filtered_headers = [
                     item for item in sorted_headers
-                    if start_z <= get_z_position(item) <= end_z
+                    if start_z <= _get_sort_key(item)[0] <= end_z
                 ]
 
                 if logger.isEnabledFor(logging.DEBUG):
@@ -379,16 +404,19 @@ class DICOMRetriever:
         self, series_uid: str, position: float
     ) -> Optional[Tuple[str, pydicom.Dataset]]:
         """
-        Get a single DICOM instance at a specific normalized z-position.
+        Get a single DICOM instance at a specific position using priority-based selection.
+
+        Selection strategy (in priority order):
+        1. If z-position varies: Map position to z-position range (select by spatial location)
+        2. If temporal data exists: Map position to temporal range (select by time)
+        3. Otherwise: Map position to index in sorted sequence (select by order)
 
         Args:
             series_uid: The DICOM series UID
-            position: Normalized z-position (0.0-1.0), where 0.0 is the beginning
-                      and 1.0 is the end of the series
+            position: Normalized position (0.0-1.0)
 
         Returns:
             Tuple of (instance_uid, pydicom.Dataset) or None if retrieval failed.
-            Returns the instance closest to the specified position.
         """
         all_instances = self.list_instances(series_uid)
 
@@ -419,35 +447,85 @@ class DICOMRetriever:
             logger.error(f"No instances could be retrieved for series {series_uid}")
             return None
 
-        # Sort by z-position
-        def get_z_position(item):
-            instance_uid, ds = item
-            if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
-                return float(ds.ImagePositionPatient[2])
-            elif hasattr(ds, 'InstanceNumber'):
-                return float(ds.InstanceNumber)
-            elif hasattr(ds, 'SliceLocation'):
-                return float(ds.SliceLocation)
-            return 0
+        # Sort by z-position, then by instance number for temporal sequences
+        sorted_headers = sorted(all_headers, key=_get_sort_key)
 
-        sorted_headers = sorted(all_headers, key=get_z_position)
+        # Extract z-positions to check for spatial variation
+        z_positions = [_get_sort_key(item)[0] for item in sorted_headers]
+        has_z_variation = len(set(z_positions)) > 1  # Check if z-positions vary
 
-        # Find instance closest to position
-        z_positions = [get_z_position(item) for item in sorted_headers]
-        min_z = min(z_positions)
-        max_z = max(z_positions)
-        z_range = max_z - min_z
+        selected_item = None
+        selection_method = None
 
-        # Map normalized position to actual z-value
-        target_z = min_z + (z_range * position)
+        # Strategy 1: If z-position varies, select by spatial location
+        if has_z_variation:
+            min_z = min(z_positions)
+            max_z = max(z_positions)
+            z_range = max_z - min_z
+            target_z = min_z + (z_range * position)
 
-        # Find closest instance
-        closest_item = min(sorted_headers, key=lambda item: abs(get_z_position(item) - target_z))
-        instance_uid, ds = closest_item
-        target_z_actual = get_z_position(closest_item)
+            # Find closest instance by z-position
+            closest_idx = min(
+                range(len(sorted_headers)),
+                key=lambda i: abs(_get_sort_key(sorted_headers[i])[0] - target_z)
+            )
+            selected_item = sorted_headers[closest_idx]
+            selection_method = f"spatial (z-position {target_z:.2f}, closest at {z_positions[closest_idx]:.2f})"
+
+        # Strategy 2: Check for temporal data (multiple instances at same z-position)
+        if selected_item is None:
+            z_to_instances = {}
+            for item in sorted_headers:
+                z = _get_sort_key(item)[0]
+                if z not in z_to_instances:
+                    z_to_instances[z] = []
+                z_to_instances[z].append(item)
+
+            # Check if any z-position has multiple instances (potential temporal sequence)
+            has_temporal = any(len(instances) > 1 for instances in z_to_instances.values())
+
+            if has_temporal:
+                # Collect all instances with time information
+                instances_with_time = []
+                for item in sorted_headers:
+                    instance_uid, ds = item
+                    # Try to extract time from various DICOM tags
+                    time_value = None
+                    if hasattr(ds, 'InstanceCreationTime'):
+                        time_value = ds.InstanceCreationTime
+                    elif hasattr(ds, 'ContentTime'):
+                        time_value = ds.ContentTime
+                    elif hasattr(ds, 'AcquisitionTime'):
+                        time_value = ds.AcquisitionTime
+
+                    # Use instance number as fallback temporal ordering
+                    temporal_order = float(ds.InstanceNumber) if hasattr(ds, 'InstanceNumber') else 0.0
+                    instances_with_time.append((item, temporal_order, time_value))
+
+                # Check if we actually have time data (not just instance numbers)
+                has_time_data = any(t[2] is not None for t in instances_with_time)
+
+                if has_time_data:
+                    # Sort by temporal information and select by position in temporal range
+                    instances_with_time.sort(key=lambda x: x[1])
+                    target_index = int(position * (len(instances_with_time) - 1))
+                    selected_item = instances_with_time[target_index][0]
+                    selection_method = f"temporal (by time/instance number)"
+                else:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug("Series has multiple instances at same z-position but no temporal data found")
+
+        # Strategy 3: Select by sequence index (fallback)
+        if selected_item is None:
+            target_index = int(position * (len(sorted_headers) - 1))
+            selected_item = sorted_headers[target_index]
+            selection_method = f"sequence index ({target_index} of {len(sorted_headers)})"
+
+        instance_uid, ds = selected_item
+        sort_key = _get_sort_key(selected_item)
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Position {position:.1%} maps to z={target_z:.2f}, found closest at z={target_z_actual:.2f}")
+            logger.debug(f"Position {position:.1%} selected by {selection_method} (z={sort_key[0]:.2f}, instance_number={sort_key[1]:.0f})")
 
         # Get full pixel data for this instance
         full_ds = self.get_instance_data(series_uid, instance_uid)

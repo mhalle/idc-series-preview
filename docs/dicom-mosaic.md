@@ -184,15 +184,53 @@ dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
 
 ## BEHAVIOR
 
-### Instance Selection
+### Instance Selection and Sorting
 
-By default, the tool selects a distributed subset of instances from the series to create the mosaic:
+All instances in a series are sorted using a two-level key:
+
+1. **Primary**: z-position (spatial location) from `ImagePositionPatient[2]` or `SliceLocation`
+2. **Secondary**: `InstanceNumber` (temporal ordering for sequences at the same location)
+
+This ensures:
+- Instances are arranged spatially from superior (head) to inferior (tail)
+- Multiple instances at the same spatial location (temporal sequences) are ordered by instance number
+- Both 3D static volumes and 4D temporal sequences are handled correctly
+
+### Mosaic Selection (Default --tile-width x --tile-height)
+
+By default, the tool selects a distributed subset of instances from the full sorted sequence:
 
 - If the series has fewer instances than requested tiles, all instances are used
 - If the series has more instances, they are:
-  1. Sorted by z-position (anatomical location) using `ImagePositionPatient`, `InstanceNumber`, or `SliceLocation`
-  2. Evenly distributed across the full z-range
+  1. Sorted by z-position then instance number (see above)
+  2. Evenly distributed across the full sequence
   3. Always includes the first and last instance in the series
+
+### Single Instance Selection (--position)
+
+The `--position` parameter selects a single instance using a priority-based strategy:
+
+**Selection Priority:**
+
+1. **If z-position varies** (e.g., multi-slice CT):
+   - Maps position to z-position range
+   - `--position 0.5` selects the slice at the spatial middle
+   - Example: In a 181-slice series from z=-792 to z=-488, position 0.5 selects the slice at z≈-640
+
+2. **If temporal data exists** (e.g., cardiac, perfusion imaging):
+   - Detects multiple instances at the same spatial location
+   - Maps position to temporal range (by time or instance number)
+   - `--position 0.5` selects the image at the middle timepoint
+   - Checks for time tags: InstanceCreationTime, ContentTime, AcquisitionTime
+
+3. **Otherwise** (static single-location images):
+   - Maps position to sequence index
+   - `--position 0.5` selects the middle instance in the sorted sequence
+
+**Examples:**
+- Multi-slice CT (z-position varies): `--position 0.5` → middle slice spatially
+- Cardiac series (same location, multiple times): `--position 0.5` → middle timepoint
+- Single-location series: `--position 0.5` → middle instance by order
 
 ### Range Selection
 

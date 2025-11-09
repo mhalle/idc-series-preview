@@ -209,15 +209,46 @@ dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \\
 .RE
 
 .SH BEHAVIOR
-.SS Instance Selection
-By default, the tool selects a distributed subset of instances from the series to create the mosaic:
+.SS Instance Selection and Sorting
+All instances are sorted using a two-level key:
+.IP 1 2
+Primary: z-position (spatial location) using ImagePositionPatient[2] or SliceLocation
+.IP 2 2
+Secondary: InstanceNumber (temporal ordering for sequences at the same location)
+
+This ensures proper arrangement for both 3D static volumes and 4D temporal sequences.
+
+.SS Mosaic Selection (Default --tile-width x --tile-height)
+By default, the tool selects a distributed subset of instances from the full sorted sequence:
 .IP \(bu 2
 If the series has fewer instances than requested tiles, all instances are used
 .IP \(bu 2
-If the series has more instances, they are sorted by z-position (anatomical location)
-and evenly distributed across the full range
+If the series has more instances, they are sorted (as above) and evenly distributed
 .IP \(bu 2
 Always includes the first and last instance in the series
+
+.SS Single Instance Selection (--position)
+The --position parameter selects a single instance using a priority-based strategy:
+
+.B Selection Priority:
+.IP 1 2
+If z-position varies (e.g., multi-slice CT):
+Map position to z-position range. Position 0.5 selects the slice at spatial middle.
+.IP 2 2
+If temporal data exists (e.g., cardiac, perfusion):
+Detect multiple instances at same location and map position to temporal range (by time or instance number).
+Position 0.5 selects the image at middle timepoint.
+.IP 3 2
+Otherwise (static single-location images):
+Map position to sequence index. Position 0.5 selects middle instance by order.
+
+.B Examples:
+.IP \(bu 2
+Multi-slice CT (z-position varies): --position 0.5 → middle slice spatially
+.IP \(bu 2
+Cardiac series (same location, multiple times): --position 0.5 → middle timepoint
+.IP \(bu 2
+Single-location series: --position 0.5 → middle instance by order
 
 .SS Range Selection
 When \-\-start and \-\-end are specified, the selection process is modified:

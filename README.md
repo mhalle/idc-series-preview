@@ -223,11 +223,18 @@ s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/instance-002.dcm
 
 ### Instance Ordering
 
-DICOM instances are sorted by their spatial position using (in order of preference):
+DICOM instances are sorted by a two-level key for proper spatial and temporal ordering:
+
+**Primary sort (Spatial)**: z-position using (in order of preference):
 1. `ImagePositionPatient[2]` (z-coordinate in patient space)
-2. `InstanceNumber` (acquisition order)
-3. `SliceLocation` (deprecated but still used)
-4. File order (last resort)
+2. `SliceLocation` (deprecated but still used)
+
+**Secondary sort (Temporal)**: `InstanceNumber` for sequences with multiple instances at the same spatial location
+
+This two-level sorting ensures that:
+- Instances are correctly arranged from superior (head) to inferior (tail)
+- Temporal sequences (e.g., cardiac imaging at different time points) maintain proper temporal order within the same spatial location
+- The tool correctly handles both 3D static volumes and 4D temporal sequences
 
 ### Windowing Strategy
 
