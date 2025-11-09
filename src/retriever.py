@@ -531,15 +531,13 @@ class DICOMRetriever:
             current_index = sorted_headers.index(selected_item)
             target_index = current_index + slice_offset
 
-            # Clamp to valid range
+            # Validate that offset stays within bounds
             if target_index < 0:
-                target_index = 0
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Slice offset {slice_offset} would go before first instance, clamping to 0")
+                logger.error(f"Slice offset {slice_offset} goes before first instance (would be index {target_index}, but valid range is 0-{len(sorted_headers)-1})")
+                return None
             elif target_index >= len(sorted_headers):
-                target_index = len(sorted_headers) - 1
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Slice offset {slice_offset} would go past last instance, clamping to {target_index}")
+                logger.error(f"Slice offset {slice_offset} goes past last instance (would be index {target_index}, but valid range is 0-{len(sorted_headers)-1})")
+                return None
 
             selected_item = sorted_headers[target_index]
             selection_method = f"{selection_method} + offset {slice_offset} → index {target_index}"

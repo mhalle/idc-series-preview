@@ -274,7 +274,10 @@ def main():
             )
 
             if not instance:
-                logger.error(f"No DICOM instance found at position {args.position}")
+                if args.slice_offset != 0:
+                    logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series (check error messages above for details)")
+                else:
+                    logger.error(f"No DICOM instance found at position {args.position}")
                 return 1
 
             if args.verbose:

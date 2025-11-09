@@ -264,7 +264,7 @@ The `--slice-offset` parameter allows you to move up or down from the selected p
 - Only valid when `--position` is specified
 - Applied after position is calculated (after selection strategy)
 - Can be positive (forward) or negative (backward)
-- Automatically clamped to series bounds (won't go before first or past last instance)
+- **Must stay within series bounds**: offset that goes before the first or past the last instance will cause an error
 - Useful for accessing adjacent slices without changing the base position parameter
 
 **Examples:**
@@ -272,6 +272,11 @@ The `--slice-offset` parameter allows you to move up or down from the selected p
 - `--position 0.5 --slice-offset -1` → One slice before the middle
 - `--position 0.0 --slice-offset 5` → Fifth slice from the beginning
 - `--position 1.0 --slice-offset -3` → Third slice from the end
+
+**Error Handling:**
+If the offset would go out of bounds, the tool returns an error with the valid index range. For example:
+- `--position 0.0 --slice-offset -10` on a 181-instance series → Error: offset goes before first instance
+- `--position 1.0 --slice-offset 100` on a 181-instance series → Error: offset goes past last instance
 
 ### Range Selection
 

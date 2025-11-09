@@ -288,7 +288,7 @@ Only valid when --position is specified. Applied after position is calculated (a
 .IP \(bu 2
 Can be positive (forward) or negative (backward)
 .IP \(bu 2
-Automatically clamped to series bounds (won't go before first or past last instance)
+Must stay within series bounds - offset that goes out of bounds returns an error
 .IP \(bu 2
 Useful for accessing adjacent slices without changing the base position parameter
 
@@ -301,6 +301,14 @@ Useful for accessing adjacent slices without changing the base position paramete
 --position 0.0 --slice-offset 5 → Fifth slice from the beginning
 .IP \(bu 2
 --position 1.0 --slice-offset -3 → Third slice from the end
+
+.B Error handling:
+If the offset would go out of bounds, the tool returns an error with the valid index range.
+For example, on a 181-instance series:
+.IP \(bu 2
+--position 0.0 --slice-offset -10 → Error: offset goes before first instance
+.IP \(bu 2
+--position 1.0 --slice-offset 100 → Error: offset goes past last instance
 
 .SS Range Selection
 When \-\-start and \-\-end are specified, the selection process is modified:
