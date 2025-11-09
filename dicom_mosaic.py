@@ -15,6 +15,35 @@ from src.mosaic import MosaicGenerator
 from src.contrast import ContrastPresets
 
 
+def normalize_series_uid(series_uid: str) -> str:
+    """
+    Normalize a series UID by adding hyphens if not present.
+
+    Converts formats like:
+    - 38902e14b11f4548910e771ee757dc82
+    - 38902e14-b11f-4548-910e-771ee757dc82
+
+    To standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+    Args:
+        series_uid: Series UID with or without hyphens
+
+    Returns:
+        Normalized series UID with hyphens
+    """
+    # Remove any existing hyphens
+    cleaned = series_uid.replace('-', '').lower()
+
+    # UUID format: 8-4-4-4-12 characters
+    if len(cleaned) != 32:
+        raise ValueError(f"Series UID must be 32 hex characters (got {len(cleaned)}): {series_uid}")
+
+    # Re-insert hyphens at correct positions
+    formatted = f"{cleaned[0:8]}-{cleaned[8:12]}-{cleaned[12:16]}-{cleaned[16:20]}-{cleaned[20:32]}"
+
+    return formatted
+
+
 def setup_logging(verbose=False):
     """Configure logging."""
     level = logging.DEBUG if verbose else logging.WARNING
@@ -106,6 +135,13 @@ def main():
     logger = logging.getLogger(__name__)
 
     try:
+        # Normalize series UID (add hyphens if not present)
+        try:
+            series_uid = normalize_series_uid(args.seriesuid)
+        except ValueError as e:
+            logger.error(f"Invalid series UID: {e}")
+            return 1
+
         # Validate output format
         output_path = Path(args.output)
         if output_path.suffix.lower() not in ['.webp', '.jpg', '.jpeg']:
@@ -130,7 +166,7 @@ def main():
 
         if args.verbose:
             logger.info(f"Starting DICOM mosaic generation")
-            logger.info(f"Series UID: {args.seriesuid}")
+            logger.info(f"Series UID: {series_uid}")
             logger.info(f"Root: {args.root}")
             logger.info(f"Tile grid: {args.tile_width}x{tile_height}")
             logger.info(f"Tile width: {args.image_width}px")
@@ -140,12 +176,12 @@ def main():
             logger.info("Retrieving DICOM instances...")
         retriever = DICOMRetriever(args.root)
         instances = retriever.get_instances_distributed(
-            args.seriesuid,
+            series_uid,
             args.tile_width * tile_height
         )
 
         if not instances:
-            logger.error(f"No DICOM instances found for series {args.seriesuid}")
+            logger.error(f"No DICOM instances found for series {series_uid}")
             return 1
 
         if args.verbose:
@@ -161,7 +197,7 @@ def main():
             window_settings=window_settings
         )
 
-        mosaic_image = generator.create_mosaic(instances, retriever, args.seriesuid)
+        mosaic_image = generator.create_mosaic(instances, retriever, series_uid)
 
         if not mosaic_image:
             logger.error("Failed to generate mosaic")
