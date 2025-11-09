@@ -86,6 +86,13 @@ Output image file path. Must have a `.webp`, `.jpg`, or `.jpeg` extension.
 : Cannot be used with `--start`, `--end`, `--tile-width`, or `--tile-height`.
 : Examples: `0.0` (beginning/superior), `0.5` (middle), `1.0` (end/inferior)
 
+`--slice-offset INT`
+: Offset from `--position` by number of slices (can be negative).
+: Only valid when `--position` is specified.
+: Default: `0` (no offset)
+: Examples: `1` (next slice), `-1` (previous slice), `5` (5 slices ahead), `-3` (3 slices back)
+: Useful for accessing adjacent slices without changing the base position parameter.
+
 ### Output Options
 
 `-q, --quality LEVEL`
@@ -182,6 +189,24 @@ dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
   --position 1.0 --contrast-preset lung
 ```
 
+### Single image with slice offset - next slice
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 next_slice.webp \
+  --position 0.5 --slice-offset 1
+```
+
+### Single image with slice offset - previous slice
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 prev_slice.webp \
+  --position 0.5 --slice-offset -1
+```
+
+### Single image with slice offset - skip ahead 5 slices
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 skip_ahead.webp \
+  --position 0.0 --slice-offset 5
+```
+
 ## BEHAVIOR
 
 ### Instance Selection and Sorting
@@ -231,6 +256,22 @@ The `--position` parameter selects a single instance using a priority-based stra
 - Multi-slice CT (z-position varies): `--position 0.5` → middle slice spatially
 - Cardiac series (same location, multiple times): `--position 0.5` → middle timepoint
 - Single-location series: `--position 0.5` → middle instance by order
+
+### Slice Offset
+
+The `--slice-offset` parameter allows you to move up or down from the selected position by a fixed number of slices:
+
+- Only valid when `--position` is specified
+- Applied after position is calculated (after selection strategy)
+- Can be positive (forward) or negative (backward)
+- Automatically clamped to series bounds (won't go before first or past last instance)
+- Useful for accessing adjacent slices without changing the base position parameter
+
+**Examples:**
+- `--position 0.5 --slice-offset 1` → One slice ahead of the middle
+- `--position 0.5 --slice-offset -1` → One slice before the middle
+- `--position 0.0 --slice-offset 5` → Fifth slice from the beginning
+- `--position 1.0 --slice-offset -3` → Third slice from the end
 
 ### Range Selection
 

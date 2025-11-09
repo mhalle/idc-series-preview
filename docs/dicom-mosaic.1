@@ -111,6 +111,17 @@ When specified, no tiling is performed - outputs a single image at --image-width
 Cannot be used with --start, --end, --tile-width, or --tile-height.
 .br
 Examples: 0.0 (beginning/superior), 0.5 (middle), 1.0 (end/inferior)
+.TP
+.B \-\-slice\-offset \fIINT\fR
+Offset from --position by number of slices (can be negative).
+.br
+Only valid when --position is specified.
+.br
+Default: 0 (no offset)
+.br
+Examples: 1 (next slice), -1 (previous slice), 5 (5 slices ahead), -3 (3 slices back)
+.br
+Useful for accessing adjacent slices independent of spacing.
 
 .SS Output Options
 .TP
@@ -207,6 +218,27 @@ dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \\
 .br
   --position 1.0 --contrast-preset lung
 .RE
+.TP
+Single image with offset \- next slice from middle:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 next.webp \\
+.br
+  --position 0.5 --slice-offset 1
+.RE
+.TP
+Single image with offset \- previous slice from middle:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 prev.webp \\
+.br
+  --position 0.5 --slice-offset -1
+.RE
+.TP
+Single image with offset \- skip ahead 5 slices from start:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 skip.webp \\
+.br
+  --position 0.0 --slice-offset 5
+.RE
 
 .SH BEHAVIOR
 .SS Instance Selection and Sorting
@@ -249,6 +281,26 @@ Multi-slice CT (z-position varies): --position 0.5 → middle slice spatially
 Cardiac series (same location, multiple times): --position 0.5 → middle timepoint
 .IP \(bu 2
 Single-location series: --position 0.5 → middle instance by order
+
+.SS Slice Offset
+The --slice-offset parameter moves up or down from the selected position by a fixed number of slices.
+Only valid when --position is specified. Applied after position is calculated (after selection strategy).
+.IP \(bu 2
+Can be positive (forward) or negative (backward)
+.IP \(bu 2
+Automatically clamped to series bounds (won't go before first or past last instance)
+.IP \(bu 2
+Useful for accessing adjacent slices without changing the base position parameter
+
+.B Examples:
+.IP \(bu 2
+--position 0.5 --slice-offset 1 → One slice ahead of the middle
+.IP \(bu 2
+--position 0.5 --slice-offset -1 → One slice before the middle
+.IP \(bu 2
+--position 0.0 --slice-offset 5 → Fifth slice from the beginning
+.IP \(bu 2
+--position 1.0 --slice-offset -3 → Third slice from the end
 
 .SS Range Selection
 When \-\-start and \-\-end are specified, the selection process is modified:

@@ -145,6 +145,12 @@ def main():
         type=float,
         help="Extract single image at normalized z-position (0.0-1.0). When specified, no tiling is performed."
     )
+    parser.add_argument(
+        "--slice-offset",
+        type=int,
+        default=0,
+        help="Offset from --position by number of slices (e.g., 1 for next slice, -1 for previous). Only valid with --position."
+    )
 
     # Output format arguments
     parser.add_argument(
@@ -213,6 +219,11 @@ def main():
             if args.start != 0.0 or args.end != 1.0:
                 logger.error("--position cannot be used with --start or --end")
                 return 1
+        else:
+            # --slice-offset only valid with --position
+            if args.slice_offset != 0:
+                logger.error("--slice-offset can only be used with --position")
+                return 1
 
         # Validate range parameters (only if not using position)
         if args.position is None:
@@ -258,7 +269,9 @@ def main():
             # Retrieve single instance at position
             if args.verbose:
                 logger.info("Retrieving DICOM instance...")
-            instance = retriever.get_instance_at_position(series_uid, args.position)
+            instance = retriever.get_instance_at_position(
+                series_uid, args.position, slice_offset=args.slice_offset
+            )
 
             if not instance:
                 logger.error(f"No DICOM instance found at position {args.position}")

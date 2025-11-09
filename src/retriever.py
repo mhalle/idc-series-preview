@@ -401,7 +401,7 @@ class DICOMRetriever:
         return results
 
     def get_instance_at_position(
-        self, series_uid: str, position: float
+        self, series_uid: str, position: float, slice_offset: int = 0
     ) -> Optional[Tuple[str, pydicom.Dataset]]:
         """
         Get a single DICOM instance at a specific position using priority-based selection.
@@ -411,9 +411,13 @@ class DICOMRetriever:
         2. If temporal data exists: Map position to temporal range (select by time)
         3. Otherwise: Map position to index in sorted sequence (select by order)
 
+        Then applies slice_offset to move up/down in the sequence.
+
         Args:
             series_uid: The DICOM series UID
             position: Normalized position (0.0-1.0)
+            slice_offset: Number of slices to offset from selected position
+                          (e.g., 1 for next slice, -1 for previous)
 
         Returns:
             Tuple of (instance_uid, pydicom.Dataset) or None if retrieval failed.
@@ -520,6 +524,25 @@ class DICOMRetriever:
             target_index = int(position * (len(sorted_headers) - 1))
             selected_item = sorted_headers[target_index]
             selection_method = f"sequence index ({target_index} of {len(sorted_headers)})"
+
+        # Apply slice offset if specified
+        if slice_offset != 0:
+            # Find current selected item index in sorted_headers
+            current_index = sorted_headers.index(selected_item)
+            target_index = current_index + slice_offset
+
+            # Clamp to valid range
+            if target_index < 0:
+                target_index = 0
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Slice offset {slice_offset} would go before first instance, clamping to 0")
+            elif target_index >= len(sorted_headers):
+                target_index = len(sorted_headers) - 1
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Slice offset {slice_offset} would go past last instance, clamping to {target_index}")
+
+            selected_item = sorted_headers[target_index]
+            selection_method = f"{selection_method} + offset {slice_offset} → index {target_index}"
 
         instance_uid, ds = selected_item
         sort_key = _get_sort_key(selected_item)
