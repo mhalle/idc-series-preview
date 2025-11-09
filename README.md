@@ -27,6 +27,31 @@ uv sync
 pip install obstore pydicom numpy pillow
 ```
 
+### AWS Credentials for S3 Access
+
+The IDC S3 bucket requires AWS credentials for list operations (even for public data). Configure credentials before use:
+
+**Option 1: AWS CLI**
+```bash
+aws configure
+# Enter your AWS Access Key ID and Secret Access Key
+```
+
+**Option 2: Environment Variables**
+```bash
+export AWS_ACCESS_KEY_ID=your_key_id
+export AWS_SECRET_ACCESS_KEY=your_secret_key
+```
+
+**Option 3: AWS Credentials File** (~/.aws/credentials)
+```ini
+[default]
+aws_access_key_id = your_key_id
+aws_secret_access_key = your_secret_key
+```
+
+Note: Even free AWS tier credentials work for reading public IDC data.
+
 ## Usage
 
 ```bash

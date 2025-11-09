@@ -106,7 +106,15 @@ class DICOMRetriever:
             return instances
 
         except Exception as e:
-            logger.error(f"Error listing instances for series {series_uid}: {e}")
+            error_str = str(e)
+            if "403" in error_str or "InvalidAccessKeyId" in error_str:
+                logger.error(f"Access denied listing series {series_uid}. This S3 bucket requires AWS credentials.")
+                logger.error(f"Configure credentials with: aws configure")
+            elif "EC2" in error_str or "169.254.169.254" in error_str:
+                logger.error(f"Could not retrieve credentials from EC2 metadata. Provide AWS credentials.")
+                logger.error(f"Set: export AWS_ACCESS_KEY_ID=... && export AWS_SECRET_ACCESS_KEY=...")
+            else:
+                logger.error(f"Error listing instances for series {series_uid}: {e}")
             return []
 
     def get_instances_distributed(
