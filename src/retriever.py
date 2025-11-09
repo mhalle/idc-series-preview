@@ -2,9 +2,8 @@
 
 import logging
 from typing import List, Tuple, Optional
-import asyncio
 
-import obstore as obs
+from obstore.store import from_url
 import pydicom
 from io import BytesIO
 
@@ -23,26 +22,22 @@ class DICOMRetriever:
             root_path: Root path for DICOM files (S3, HTTP, or local path)
         """
         self.root_path = root_path
-        self._store = self._init_store(root_path)
+        self.store = self._init_store(root_path)
 
     @staticmethod
     def _init_store(root_path: str):
         """Initialize the appropriate object store based on path."""
-        if root_path.startswith("s3://"):
-            # S3 storage
-            return obs.parse_url(root_path)
-        elif root_path.startswith("http://") or root_path.startswith("https://"):
-            # HTTP storage
-            return obs.parse_url(root_path)
-        else:
-            # Local filesystem
-            return obs.parse_url(f"file://{root_path}")
+        if not root_path.startswith(("s3://", "http://", "https://", "file://")):
+            # Local filesystem - add file:// prefix
+            root_path = f"file://{root_path}"
+
+        return from_url(root_path)
 
     def _get_instance_path(self, series_uid: str, instance_uid: str) -> str:
         """Get the full path to a DICOM instance."""
         return f"{series_uid}/{instance_uid}.dcm"
 
-    async def _get_instance_headers(
+    def _get_instance_headers(
         self, series_uid: str, instance_uid: str, max_bytes: int = 5000
     ) -> Tuple[Optional[pydicom.Dataset], int]:
         """
@@ -61,18 +56,18 @@ class DICOMRetriever:
 
             # Try initial range request
             try:
-                data = obs.get_range(self._store[0], path, 0, max_bytes)
+                data = self.store.get_range(path, 0, max_bytes)
             except Exception as e:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Initial range request failed for {path}, trying larger range: {e}")
                 # Fall back to larger range
-                data = obs.get_range(self._store[0], path, 0, 20000)
+                data = self.store.get_range(path, 0, 20000)
 
             # Parse DICOM headers
             try:
                 ds = pydicom.dcmread(BytesIO(data), stop_before_pixels=True)
                 # Get file size from metadata if available
-                meta_data = obs.head(self._store[0], path)
+                meta_data = self.store.head(path)
                 size = meta_data.size
                 return ds, size
             except Exception as e:
@@ -83,20 +78,6 @@ class DICOMRetriever:
         except Exception as e:
             logger.error(f"Error retrieving instance headers {series_uid}/{instance_uid}: {e}")
             return None, 0
-
-    def _get_instance_path_sync(
-        self, series_uid: str, instance_uid: str
-    ) -> Tuple[Optional[pydicom.Dataset], int]:
-        """Synchronous wrapper for getting instance headers."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
-            self._get_instance_headers(series_uid, instance_uid)
-        )
 
     def list_instances(self, series_uid: str) -> List[str]:
         """
@@ -110,12 +91,15 @@ class DICOMRetriever:
         """
         try:
             # List objects in the series directory
-            results = obs.list(self._store[0], series_uid)
+            results = self.store.list(series_uid)
             instances = []
 
             for obj in results:
-                if obj.name.endswith('.dcm'):
-                    instance_uid = obj.name.replace('.dcm', '')
+                # obj has 'name' attribute with the path
+                name = obj.name if hasattr(obj, 'name') else str(obj)
+                if name.endswith('.dcm'):
+                    # Extract just the filename without the series UID prefix
+                    instance_uid = name.split('/')[-1].replace('.dcm', '')
                     instances.append(instance_uid)
 
             instances.sort()
@@ -163,7 +147,7 @@ class DICOMRetriever:
         # Retrieve headers for selected instances
         results = []
         for instance_uid in selected:
-            ds, size = self._get_instance_path_sync(series_uid, instance_uid)
+            ds, size = self._get_instance_headers(series_uid, instance_uid)
             if ds is not None:
                 results.append((instance_uid, ds))
             else:
@@ -189,7 +173,7 @@ class DICOMRetriever:
         """
         try:
             path = self._get_instance_path(series_uid, instance_uid)
-            data = obs.get(self._store[0], path)
+            data = self.store.get(path)
             ds = pydicom.dcmread(BytesIO(data))
             return ds
 
