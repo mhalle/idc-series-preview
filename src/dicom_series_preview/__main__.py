@@ -144,19 +144,11 @@ def add_common_arguments(parser):
 
     # Contrast parameters (shared)
     parser.add_argument(
-        "--window-width",
-        type=float,
-        help="Window width for contrast adjustment (Hounsfield Units)"
-    )
-    parser.add_argument(
-        "--window-center",
-        type=float,
-        help="Window center for contrast adjustment (Hounsfield Units)"
-    )
-    parser.add_argument(
-        "--contrast-preset",
-        choices=list(ContrastPresets.PRESETS.keys()) + ["auto"],
-        help="Preset contrast settings (lung, bone, brain, abdomen, liver, mediastinum, soft_tissue, auto)"
+        "--contrast",
+        help="Contrast settings: preset name (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue), "
+             "shortcut (soft for soft-tissue, media for mediastinum), "
+             "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
+             "or custom 'window,level' values (e.g., '1500,500')"
     )
 
     # Output format arguments
@@ -253,6 +245,59 @@ def _parse_and_normalize_series(series_spec, root, verbose, logger):
     return root_path, series_uid
 
 
+def parse_contrast_arg(contrast_str: str) -> dict | str | None:
+    """
+    Parse contrast argument which can be a preset name, "auto", "embedded", or window,level values.
+
+    Args:
+        contrast_str: Contrast specification (e.g., "lung", "soft", "auto", "embedded", "1500,500")
+
+    Returns:
+        - Dict with 'window_width' and 'window_center' for custom values or presets
+        - "auto" string for auto-detection from pixel statistics
+        - "embedded" string for using DICOM file's window/level
+        - Raises ValueError if format is invalid
+    """
+    contrast_str = contrast_str.strip().lower()
+
+    # Check if it's a special keyword
+    if contrast_str in ["auto", "embedded"]:
+        return contrast_str
+
+    # Check if it's a preset or shortcut
+    if contrast_str in ContrastPresets.PRESETS.keys() or contrast_str in ContrastPresets.SHORTCUTS.keys():
+        return ContrastPresets.get_preset(contrast_str)
+
+    # Check if it's window,level format
+    if "," in contrast_str:
+        try:
+            parts = contrast_str.split(",")
+            if len(parts) != 2:
+                raise ValueError(
+                    f"Window,level format requires exactly 2 values, got {len(parts)}"
+                )
+            window_width = float(parts[0].strip())
+            window_level = float(parts[1].strip())
+            return {
+                "window_width": window_width,
+                "window_center": window_level,
+            }
+        except ValueError as e:
+            raise ValueError(f"Invalid window,level format: {e}")
+
+    # Build list of valid options
+    valid_presets = sorted(list(ContrastPresets.PRESETS.keys()))
+    valid_shortcuts = sorted(list(ContrastPresets.SHORTCUTS.keys()))
+    preset_list = ", ".join(valid_presets)
+    shortcuts_list = ", ".join(valid_shortcuts)
+
+    # Not a valid format
+    raise ValueError(
+        f"Invalid contrast specification: '{contrast_str}'. "
+        f"Must be a preset ({preset_list}), shortcut ({shortcuts_list}), 'auto', 'embedded', or window,level (e.g., '1500,500')"
+    )
+
+
 def _validate_output_format(output_path):
     """
     Validate output file format.
@@ -272,7 +317,7 @@ def _get_window_settings_from_args(args):
 
     Supports:
     - Contrast preset (lung, bone, brain, etc.)
-    - Manual window width and center
+    - Custom window,level values (e.g., "1500,500")
     - Auto-detection ("auto")
 
     Args:
@@ -281,16 +326,13 @@ def _get_window_settings_from_args(args):
     Returns:
         Window settings dict, "auto" string, or None
     """
-    if args.contrast_preset:
-        if args.contrast_preset == "auto":
-            return "auto"
-        else:
-            return ContrastPresets.get_preset(args.contrast_preset)
-    elif args.window_width and args.window_center:
-        return {
-            'window_width': args.window_width,
-            'window_center': args.window_center
-        }
+    if hasattr(args, "contrast") and args.contrast:
+        try:
+            return parse_contrast_arg(args.contrast)
+        except ValueError as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Invalid contrast argument: {e}")
+            return None
     return None
 
 

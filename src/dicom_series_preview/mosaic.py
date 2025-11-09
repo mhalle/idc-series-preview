@@ -30,7 +30,11 @@ class MosaicGenerator:
             tile_width: Number of images per row
             tile_height: Number of images per column
             image_width: Width of each tile in pixels (height scaled proportionally)
-            window_settings: Either 'auto', a preset name, or dict with window_width/window_center
+            window_settings: One of:
+                - 'auto': auto-detect from pixel statistics
+                - 'embedded': use window/level from DICOM file (fall back to auto if not present)
+                - preset name (lung, bone, brain, etc.)
+                - dict with window_width/window_center keys
         """
         self.tile_width = tile_width
         self.tile_height = tile_height
@@ -67,7 +71,11 @@ class MosaicGenerator:
         self, pixel_array: np.ndarray, ds: Optional[pydicom.Dataset] = None
     ) -> Dict[str, float]:
         """
-        Determine window/center settings.
+        Determine window/center settings based on priority:
+        1. If user specifies 'embedded': use DICOM file values, fall back to auto
+        2. If user specifies 'auto': auto-detect from pixel statistics
+        3. If user specifies preset or values: use those
+        4. Otherwise: try file values, then fall back to auto
 
         Args:
             pixel_array: Pixel data
@@ -76,10 +84,22 @@ class MosaicGenerator:
         Returns:
             Dict with window_width and window_center
         """
-        # Priority 1: Command-line arguments
+        # If user explicitly requests embedded window/level
+        if self.window_settings == "embedded":
+            # Try to get from file first
+            if ds is not None:
+                file_settings = self._get_file_window_settings(ds)
+                if file_settings:
+                    return file_settings
+            # Fall back to auto if not in file
+            return ContrastPresets.auto_detect(pixel_array)
+
+        # If user requests auto-detection
         if self.window_settings == "auto":
             return ContrastPresets.auto_detect(pixel_array)
-        elif isinstance(self.window_settings, dict):
+
+        # If user provides dict or preset
+        if isinstance(self.window_settings, dict):
             return self.window_settings
         elif isinstance(self.window_settings, str):
             # Treat as preset name
@@ -87,33 +107,47 @@ class MosaicGenerator:
             if preset:
                 return preset
 
-        # Priority 2: Values stored in DICOM file
+        # Default behavior: try file, then auto
         if ds is not None:
-            try:
-                if hasattr(ds, 'WindowWidth') and hasattr(ds, 'WindowCenter'):
-                    # WindowWidth/WindowCenter can be single value or list/MultiValue
-                    ww = ds.WindowWidth
-                    wc = ds.WindowCenter
+            file_settings = self._get_file_window_settings(ds)
+            if file_settings:
+                return file_settings
 
-                    # Handle lists/sequences/MultiValue - use first one
-                    if hasattr(ww, '__getitem__'):  # Sequence-like (list, tuple, MultiValue)
-                        ww = ww[0]
-                    if hasattr(wc, '__getitem__'):  # Sequence-like
-                        wc = wc[0]
-
-                    window_settings = {
-                        "window_width": float(ww),
-                        "window_center": float(wc)
-                    }
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Using file window settings: WW={ww}, WC={wc}")
-                    return window_settings
-            except Exception as e:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Could not read window settings from file: {e}")
-
-        # Priority 3: Auto-detection
         return ContrastPresets.auto_detect(pixel_array)
+
+    def _get_file_window_settings(self, ds: pydicom.Dataset) -> Optional[Dict[str, float]]:
+        """
+        Extract window/center settings from DICOM file metadata.
+
+        Args:
+            ds: pydicom.Dataset
+
+        Returns:
+            Dict with window_width and window_center, or None if not found
+        """
+        try:
+            if hasattr(ds, 'WindowWidth') and hasattr(ds, 'WindowCenter'):
+                # WindowWidth/WindowCenter can be single value or list/MultiValue
+                ww = ds.WindowWidth
+                wc = ds.WindowCenter
+
+                # Handle lists/sequences/MultiValue - use first one
+                if hasattr(ww, '__getitem__'):  # Sequence-like (list, tuple, MultiValue)
+                    ww = ww[0]
+                if hasattr(wc, '__getitem__'):  # Sequence-like
+                    wc = wc[0]
+
+                window_settings = {
+                    "window_width": float(ww),
+                    "window_center": float(wc)
+                }
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Using file window settings: WW={ww}, WC={wc}")
+                return window_settings
+        except Exception as e:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Could not read window settings from file: {e}")
+        return None
 
     def _pixel_array_to_image(self, pixel_array: np.ndarray, ds: Optional[pydicom.Dataset] = None) -> Image.Image:
         """

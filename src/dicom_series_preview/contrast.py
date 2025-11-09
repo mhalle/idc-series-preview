@@ -62,24 +62,36 @@ class ContrastPresets:
             "window_center": 30,
         },
         # Soft tissue
-        "soft_tissue": {
+        "soft-tissue": {
             "window_width": 400,
             "window_center": 50,
         },
     }
 
+    # Shortcut aliases for preset names
+    SHORTCUTS: Dict[str, str] = {
+        "soft": "soft-tissue",
+        "media": "mediastinum",
+    }
+
     @classmethod
     def get_preset(cls, name: str) -> Optional[Dict[str, float]]:
         """
-        Get a preset by name.
+        Get a preset by name or shortcut.
 
         Args:
-            name: Preset name (e.g., 'lung', 'bone')
+            name: Preset name (e.g., 'lung', 'bone', 'soft-tissue') or shortcut (e.g., 'soft', 'media')
 
         Returns:
             Dict with 'window_width' and 'window_center' keys, or None if not found
         """
-        preset = cls.PRESETS.get(name.lower())
+        name_lower = name.lower()
+
+        # Check for shortcuts first
+        if name_lower in cls.SHORTCUTS:
+            name_lower = cls.SHORTCUTS[name_lower]
+
+        preset = cls.PRESETS.get(name_lower)
         if preset and logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Using '{name}' contrast preset: WW={preset['window_width']}, WC={preset['window_center']}")
         return preset
