@@ -11,6 +11,25 @@ logger = logging.getLogger(__name__)
 class ContrastPresets:
     """Standard DICOM window/level presets for different anatomies."""
 
+    # Pre-compute tanh lookup table once
+    _TANH_LUT = None
+    _TANH_LUT_SIZE = 1024
+
+    @classmethod
+    def _get_tanh_lut(cls):
+        """Get or create the pre-computed tanh lookup table."""
+        if cls._TANH_LUT is None:
+            lut = np.zeros(cls._TANH_LUT_SIZE, dtype=np.uint8)
+            for i in range(cls._TANH_LUT_SIZE):
+                # Normalized position: -3 to +3
+                normalized = (i / cls._TANH_LUT_SIZE) * 6 - 3
+                # Apply tanh: maps (-inf, inf) to (-1, 1)
+                tanh_val = np.tanh(normalized)
+                # Scale to 0-255
+                lut[i] = int((tanh_val + 1) / 2 * 255)
+            cls._TANH_LUT = lut
+        return cls._TANH_LUT
+
     PRESETS: Dict[str, Dict[str, float]] = {
         # Lung
         "lung": {
@@ -94,14 +113,15 @@ class ContrastPresets:
             "window_center": window_center,
         }
 
-    @staticmethod
+    @classmethod
     def apply_windowing(
+        cls,
         pixel_array: np.ndarray,
         window_width: float,
         window_center: float,
     ) -> np.ndarray:
         """
-        Apply window/level adjustment to pixel array.
+        Apply window/level adjustment to pixel array with linear windowing.
 
         Args:
             pixel_array: Input pixel array
@@ -111,6 +131,9 @@ class ContrastPresets:
         Returns:
             Adjusted pixel array (uint8, 0-255)
         """
+        if window_width <= 0:
+            return np.zeros_like(pixel_array, dtype=np.uint8)
+
         # Calculate lower and upper bounds
         c = window_center
         w = window_width
@@ -118,13 +141,10 @@ class ContrastPresets:
         below = c - w / 2
         above = c + w / 2
 
-        # Apply windowing
+        # Apply windowing with hard clipping
         windowed = np.clip(pixel_array, below, above)
 
         # Scale to 0-255
-        if w > 0:
-            windowed = ((windowed - below) / w) * 255
-        else:
-            windowed = np.zeros_like(windowed)
+        windowed = ((windowed - below) / w) * 255
 
         return windowed.astype(np.uint8)

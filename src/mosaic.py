@@ -64,17 +64,19 @@ class MosaicGenerator:
             return None
 
     def _get_window_settings(
-        self, pixel_array: np.ndarray
+        self, pixel_array: np.ndarray, ds: Optional[pydicom.Dataset] = None
     ) -> Dict[str, float]:
         """
         Determine window/center settings.
 
         Args:
             pixel_array: Pixel data
+            ds: Optional DICOM dataset to read stored window/center values
 
         Returns:
             Dict with window_width and window_center
         """
+        # Priority 1: Command-line arguments
         if self.window_settings == "auto":
             return ContrastPresets.auto_detect(pixel_array)
         elif isinstance(self.window_settings, dict):
@@ -82,23 +84,50 @@ class MosaicGenerator:
         elif isinstance(self.window_settings, str):
             # Treat as preset name
             preset = ContrastPresets.get_preset(self.window_settings)
-            return preset if preset else ContrastPresets.auto_detect(pixel_array)
-        else:
-            # Default auto-detection
-            return ContrastPresets.auto_detect(pixel_array)
+            if preset:
+                return preset
 
-    def _pixel_array_to_image(self, pixel_array: np.ndarray) -> Image.Image:
+        # Priority 2: Values stored in DICOM file
+        if ds is not None:
+            try:
+                if hasattr(ds, 'WindowWidth') and hasattr(ds, 'WindowCenter'):
+                    # WindowWidth/WindowCenter can be single value or list/MultiValue
+                    ww = ds.WindowWidth
+                    wc = ds.WindowCenter
+
+                    # Handle lists/sequences/MultiValue - use first one
+                    if hasattr(ww, '__getitem__'):  # Sequence-like (list, tuple, MultiValue)
+                        ww = ww[0]
+                    if hasattr(wc, '__getitem__'):  # Sequence-like
+                        wc = wc[0]
+
+                    window_settings = {
+                        "window_width": float(ww),
+                        "window_center": float(wc)
+                    }
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Using file window settings: WW={ww}, WC={wc}")
+                    return window_settings
+            except Exception as e:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Could not read window settings from file: {e}")
+
+        # Priority 3: Auto-detection
+        return ContrastPresets.auto_detect(pixel_array)
+
+    def _pixel_array_to_image(self, pixel_array: np.ndarray, ds: Optional[pydicom.Dataset] = None) -> Image.Image:
         """
         Convert pixel array to PIL Image.
 
         Args:
             pixel_array: NumPy array of pixel values
+            ds: Optional DICOM dataset for reading stored window/center values
 
         Returns:
             PIL Image object
         """
         # Get window settings for this image
-        window_settings = self._get_window_settings(pixel_array)
+        window_settings = self._get_window_settings(pixel_array, ds)
 
         # Apply windowing
         windowed = ContrastPresets.apply_windowing(
@@ -154,11 +183,31 @@ class MosaicGenerator:
             logger.error("No instances provided")
             return None
 
+        # Sort instances by z-position (slice order)
+        def get_z_position(item):
+            instance_uid, ds = item
+            # Try ImagePositionPatient (z coordinate)
+            if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
+                return float(ds.ImagePositionPatient[2])
+            # Fall back to InstanceNumber
+            elif hasattr(ds, 'InstanceNumber'):
+                return float(ds.InstanceNumber)
+            # Fall back to SliceLocation
+            elif hasattr(ds, 'SliceLocation'):
+                return float(ds.SliceLocation)
+            # Default: return 0 to maintain order
+            return 0
+
+        instances = sorted(instances, key=get_z_position)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Sorted {len(instances)} instances by z-position")
+
         # Convert DICOM data to images
         images = []
         for instance_uid, ds in instances:
             try:
                 pixel_array = self._extract_pixel_array(ds)
+                ds_for_windowing = ds
 
                 # If no pixel data and we have a retriever, fetch full instance
                 if pixel_array is None and retriever and series_uid:
@@ -167,13 +216,14 @@ class MosaicGenerator:
                     ds_full = retriever.get_instance_data(series_uid, instance_uid)
                     if ds_full:
                         pixel_array = self._extract_pixel_array(ds_full)
+                        ds_for_windowing = ds_full
 
                 if pixel_array is None:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Skipping {instance_uid} - no pixel data")
                     continue
 
-                img = self._pixel_array_to_image(pixel_array)
+                img = self._pixel_array_to_image(pixel_array, ds_for_windowing)
                 img = self._resize_image(img)
                 images.append(img)
 

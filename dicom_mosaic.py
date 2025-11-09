@@ -22,16 +22,27 @@ def normalize_series_uid(series_uid: str) -> str:
     Converts formats like:
     - 38902e14b11f4548910e771ee757dc82
     - 38902e14-b11f-4548-910e-771ee757dc82
+    - 38902e14* (prefix with wildcard)
+    - 389* (partial prefix)
 
     To standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    Or returns prefix with wildcard for partial matches.
 
     Args:
-        series_uid: Series UID with or without hyphens
+        series_uid: Series UID with or without hyphens, or prefix with wildcard
 
     Returns:
-        Normalized series UID with hyphens
+        Normalized series UID with hyphens, or prefix pattern for searching
     """
-    # Remove any existing hyphens
+    # Check if this is a prefix search (contains wildcard)
+    if '*' in series_uid:
+        # This is a prefix search - clean it and return for searching
+        prefix = series_uid.replace('*', '').replace('-', '').lower()
+        if not prefix:
+            raise ValueError("Prefix cannot be empty")
+        return f"{prefix}*"  # Return as prefix pattern
+
+    # Remove any existing hyphens for full UUID
     cleaned = series_uid.replace('-', '').lower()
 
     # UUID format: 8-4-4-4-12 characters
@@ -62,7 +73,9 @@ def main():
     # Required arguments
     parser.add_argument(
         "seriesuid",
-        help="DICOM Series UID"
+        help="DICOM Series UID (full UID, partial with hyphens, or prefix with wildcard). "
+             "Examples: 38902e14-b11f-4548-910e-771ee757dc82, "
+             "38902e14b11f4548910e771ee757dc82, 38902e14*, 389*"
     )
     parser.add_argument(
         "output",
@@ -118,8 +131,8 @@ def main():
     parser.add_argument(
         "-q", "--quality",
         type=int,
-        default=85,
-        help="Output image quality (0-100). Default: 85"
+        default=25,
+        help="Output image quality (0-100). Default: 25"
     )
 
     # Utility arguments
@@ -135,12 +148,37 @@ def main():
     logger = logging.getLogger(__name__)
 
     try:
-        # Normalize series UID (add hyphens if not present)
+        # Normalize series UID (add hyphens if not present, or prepare for prefix search)
         try:
             series_uid = normalize_series_uid(args.seriesuid)
         except ValueError as e:
             logger.error(f"Invalid series UID: {e}")
             return 1
+
+        # Handle prefix search (ends with *)
+        if series_uid.endswith('*'):
+            if args.verbose:
+                logger.info(f"Searching for series matching prefix: {args.seriesuid}...")
+
+            retriever_temp = DICOMRetriever(args.root)
+            prefix = series_uid.rstrip('*')
+            matches = retriever_temp.find_series_by_prefix(prefix)
+
+            if not matches:
+                logger.error(f"No series found matching prefix: {args.seriesuid}")
+                return 1
+            elif len(matches) > 1:
+                logger.error(f"Prefix '{args.seriesuid}' matches {len(matches)} series:")
+                for match in matches[:10]:  # Show first 10
+                    logger.error(f"  - {match}")
+                if len(matches) > 10:
+                    logger.error(f"  ... and {len(matches) - 10} more")
+                logger.error("Please provide a more specific prefix")
+                return 1
+            else:
+                series_uid = matches[0]
+                if args.verbose:
+                    logger.info(f"Found matching series: {series_uid}")
 
         # Validate output format
         output_path = Path(args.output)
