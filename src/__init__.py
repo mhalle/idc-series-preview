@@ -1,0 +1,1 @@
+"""DICOM Mosaic Generator modules."""
