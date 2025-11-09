@@ -15,6 +15,54 @@ from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
 
 
+def parse_series_specification(
+    series_spec: str, default_root: str
+) -> tuple[str, str]:
+    """
+    Parse series specification, which can be either a series UID or a full path.
+
+    Handles multiple formats:
+    - Series UID only: "38902e14-b11f-4548-910e-771ee757dc82"
+    - Series UID with prefix: "38902e14*"
+    - Full path: "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82"
+    - Full path with slash: "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/"
+    - Full path with wildcard: "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/*"
+    - Local path: "file:///path/to/series/38902e14-b11f-4548-910e-771ee757dc82"
+    - HTTP URL: "http://example.com/dicom/38902e14-b11f-4548-910e-771ee757dc82"
+
+    Args:
+        series_spec: Series specification (UID or full path)
+        default_root: Default root path to use if only UID is provided
+
+    Returns:
+        Tuple of (root_path, series_uid_or_prefix)
+
+    Raises:
+        ValueError: If the specification format is invalid
+    """
+    # Check if this is a full path (starts with a storage scheme)
+    if any(series_spec.startswith(scheme) for scheme in ("s3://", "http://", "https://", "file://")):
+        # This is a full path - extract root and series UID
+        # Remove trailing wildcards and slashes
+        clean_spec = series_spec.rstrip("/*")
+
+        # Find the last slash to separate root from series UID
+        last_slash = clean_spec.rfind("/")
+        if last_slash == -1:
+            raise ValueError(f"Invalid full path format: {series_spec}")
+
+        root = clean_spec[:last_slash]
+        series_uid = clean_spec[last_slash + 1 :]
+
+        if not series_uid:
+            raise ValueError(f"No series UID found in path: {series_spec}")
+
+        return root, series_uid
+    else:
+        # This is a series UID or prefix - use default root
+        return default_root, series_spec
+
+
 def normalize_series_uid(series_uid: str) -> str:
     """
     Normalize a series UID by adding hyphens if not present.
@@ -73,9 +121,11 @@ def main():
     # Required arguments
     parser.add_argument(
         "seriesuid",
-        help="DICOM Series UID (full UID, partial with hyphens, or prefix with wildcard). "
-             "Examples: 38902e14-b11f-4548-910e-771ee757dc82, "
-             "38902e14b11f4548910e771ee757dc82, 38902e14*, 389*"
+        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
+             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82 or "
+             "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/ or "
+             "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/*). "
+             "Full paths override --root parameter."
     )
     parser.add_argument(
         "output",
@@ -173,9 +223,20 @@ def main():
     logger = logging.getLogger(__name__)
 
     try:
+        # Parse series specification (can be UID or full path)
+        try:
+            root_path, series_spec = parse_series_specification(args.seriesuid, args.root)
+
+            # If a full path was provided and --root was also specified, note the override
+            if root_path != args.root and args.verbose:
+                logger.info(f"Full path specified, overriding --root with: {root_path}")
+        except ValueError as e:
+            logger.error(f"Invalid series specification: {e}")
+            return 1
+
         # Normalize series UID (add hyphens if not present, or prepare for prefix search)
         try:
-            series_uid = normalize_series_uid(args.seriesuid)
+            series_uid = normalize_series_uid(series_spec)
         except ValueError as e:
             logger.error(f"Invalid series UID: {e}")
             return 1
@@ -183,17 +244,17 @@ def main():
         # Handle prefix search (ends with *)
         if series_uid.endswith('*'):
             if args.verbose:
-                logger.info(f"Searching for series matching prefix: {args.seriesuid}...")
+                logger.info(f"Searching for series matching prefix: {series_spec}...")
 
-            retriever_temp = DICOMRetriever(args.root)
+            retriever_temp = DICOMRetriever(root_path)
             prefix = series_uid.rstrip('*')
             matches = retriever_temp.find_series_by_prefix(prefix)
 
             if not matches:
-                logger.error(f"No series found matching prefix: {args.seriesuid}")
+                logger.error(f"No series found matching prefix: {series_spec}")
                 return 1
             elif len(matches) > 1:
-                logger.error(f"Prefix '{args.seriesuid}' matches {len(matches)} series:")
+                logger.error(f"Prefix '{series_spec}' matches {len(matches)} series:")
                 for match in matches[:10]:  # Show first 10
                     logger.error(f"  - {match}")
                 if len(matches) > 10:
@@ -256,10 +317,10 @@ def main():
         if args.verbose:
             logger.info(f"Starting DICOM mosaic generation")
             logger.info(f"Series UID: {series_uid}")
-            logger.info(f"Root: {args.root}")
+            logger.info(f"Root: {root_path}")
 
         # Initialize retriever
-        retriever = DICOMRetriever(args.root)
+        retriever = DICOMRetriever(root_path)
 
         # Handle position mode (single image) vs range/mosaic mode
         if args.position is not None:
