@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "dicom-mosaic"
+name = "dicom-series-preview"
 version = "0.1.0"
-description = "Generate DICOM mosaics from series stored on S3, HTTP, or local files"
+description = "Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
     {name = "Developer", email = "dev@example.com"}
 ]
-keywords = ["dicom", "medical-imaging", "mosaic", "s3"]
+keywords = ["dicom", "medical-imaging", "series", "preview", "viewer", "s3"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Healthcare Industry",
@@ -45,7 +45,7 @@ gdcm = [
 ]
 
 [project.scripts]
-dicom-mosaic = "dicom_mosaic.__main__:main"
+dicom-series-preview = "dicom_series_preview.__main__:main"
 
 [tool.black]
 line-length = 100

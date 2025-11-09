@@ -1,4 +1,4 @@
-"""DICOM Mosaic Generator - Generate tiled mosaic images from DICOM series."""
+"""DICOM Series Preview - Preview DICOM series stored on S3, HTTP, or local files."""
 
 from .__main__ import main, normalize_series_uid, parse_series_specification, setup_logging
 from .retriever import DICOMRetriever

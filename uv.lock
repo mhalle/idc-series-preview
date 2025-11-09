@@ -316,7 +316,7 @@ toml = [
 ]
 
 [[package]]
-name = "dicom-mosaic"
+name = "dicom-series-preview"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
