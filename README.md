@@ -107,6 +107,8 @@ Options:
   --contrast-preset NAME Preset contrast (lung, bone, brain, abdomen, liver, mediastinum, soft_tissue, auto)
   --window-width WIDTH   Manual window width (Hounsfield Units)
   --window-center CENTER Manual window center (Hounsfield Units)
+  --start FLOAT          Start of normalized z-position range 0.0-1.0 (default: 0.0)
+  --end FLOAT            End of normalized z-position range 0.0-1.0 (default: 1.0)
   -q, --quality LEVEL    Output quality 0-100 (default: 25)
   -v, --verbose          Enable detailed logging
   --help                 Show this help message
@@ -147,6 +149,18 @@ dicom-mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
 ```bash
 dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast-preset lung -q 50 -v
+```
+
+### Using range selection (middle 60% of series)
+```bash
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --start 0.2 --end 0.8
+```
+
+### Using range selection (first 25% of series)
+```bash
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --start 0.0 --end 0.25
 ```
 
 ## Input Format
@@ -221,6 +235,31 @@ The tool uses a smart two-pass strategy:
 - Converts to PIL images with windowing applied
 
 This reduces bandwidth significantly for large series.
+
+### Range Selection
+
+The `--start` and `--end` options allow you to select a subset of the series based on normalized z-position range:
+
+- **Range**: 0.0 (beginning) to 1.0 (end) of the series
+- **Default**: --start 0.0 --end 1.0 (full series)
+
+**Examples:**
+- `--start 0.0 --end 0.5`: First 50% of series (head/superior region)
+- `--start 0.5 --end 1.0`: Last 50% of series (tail/inferior region)
+- `--start 0.2 --end 0.8`: Middle 60% of series
+
+**Behavior:**
+1. Instances are sorted by z-position (spatial location)
+2. Min and max z-values are calculated
+3. Range is mapped to actual z-values: start_z = min_z + (max_z - min_z) × start
+4. Only instances with z-position between start_z and end_z (inclusive) are selected
+5. If fewer instances are found than tiles requested, returns all instances in range
+6. Remaining tiles in the grid are filled with black/blank tiles
+
+This is useful for:
+- Focusing on specific anatomical regions (e.g., upper/lower abdomen, proximal/distal limb)
+- Creating separate mosaics for different parts of a large series
+- Sampling specific slices without needing to know exact indices
 
 ## Supported DICOM Codecs
 

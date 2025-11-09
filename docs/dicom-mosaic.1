@@ -86,6 +86,23 @@ Window width for manual contrast adjustment (in Hounsfield Units).
 .B \-\-window-center \fICENTER\fR
 Window center for manual contrast adjustment (in Hounsfield Units).
 
+.SS Range Selection Options
+.TP
+.B \-\-start \fIFLOAT\fR
+Start of normalized z-position range (0.0-1.0), where 0.0 is the beginning (superior/head)
+and 1.0 is the end (inferior/tail) of the series.
+.br
+Default: 0.0
+.br
+Examples: 0.0 (beginning), 0.2 (20%), 0.5 (middle)
+.TP
+.B \-\-end \fIFLOAT\fR
+End of normalized z-position range (0.0-1.0).
+.br
+Default: 1.0
+.br
+Examples: 1.0 (end), 0.5 (middle), 0.75 (75%)
+
 .SS Output Options
 .TP
 .BR \-q ", " \-\-quality \fILEVEL\fR
@@ -139,6 +156,27 @@ Verbose output with logging:
 .RS
 dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
 .RE
+.TP
+Range selection \- middle 60% of series:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \\
+.br
+  --start 0.2 --end 0.8
+.RE
+.TP
+Range selection \- first half of series:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \\
+.br
+  --start 0.0 --end 0.5
+.RE
+.TP
+Range selection \- last quarter with bone contrast:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \\
+.br
+  --start 0.75 --end 1.0 --contrast-preset bone
+.RE
 
 .SH BEHAVIOR
 .SS Instance Selection
@@ -150,6 +188,26 @@ If the series has more instances, they are sorted by z-position (anatomical loca
 and evenly distributed across the full range
 .IP \(bu 2
 Always includes the first and last instance in the series
+
+.SS Range Selection
+When \-\-start and \-\-end are specified, the selection process is modified:
+.IP 1 2
+All instances are sorted by z-position as usual
+.IP 2 2
+Min and max z-values are identified
+.IP 3 2
+Normalized range is mapped to actual z-values: start_z = min_z + (max_z - min_z) × start
+.IP 4 2
+Only instances with z-position between start_z and end_z (inclusive) are selected
+.IP 5 2
+From the filtered set, instances are distributed as usual
+.IP 6 2
+If fewer instances are found than tiles requested, all are used (no duplicates)
+.IP 7 2
+Remaining tiles are filled with blank/black images
+
+Range values are normalized (0.0-1.0) to be independent of actual z-positions,
+making ranges portable across different series.
 
 .SS Contrast Settings
 Contrast settings are determined in this priority order:

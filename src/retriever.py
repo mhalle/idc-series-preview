@@ -237,20 +237,24 @@ class DICOMRetriever:
             return []
 
     def get_instances_distributed(
-        self, series_uid: str, count: int
+        self, series_uid: str, count: int, start: float = 0.0, end: float = 1.0
     ) -> List[Tuple[str, pydicom.Dataset]]:
         """
         Get a distributed subset of DICOM instances from a series.
 
-        Selects instances evenly distributed across the entire series range
-        to represent the full set of images.
+        Selects instances evenly distributed across a specified z-position range
+        to represent the full set of images in that range.
 
         Args:
             series_uid: The DICOM series UID
             count: Number of instances to retrieve
+            start: Start of normalized z-position range (0.0-1.0). Default: 0.0
+            end: End of normalized z-position range (0.0-1.0). Default: 1.0
 
         Returns:
-            List of tuples (instance_uid, pydicom.Dataset)
+            List of tuples (instance_uid, pydicom.Dataset).
+            If fewer instances are found in the range than requested, returns all
+            instances in the range (no duplicates).
         """
         all_instances = self.list_instances(series_uid)
 
@@ -282,28 +286,54 @@ class DICOMRetriever:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Retrieved headers for {len(all_headers)} instances ({headers_bytes / 1024 / 1024:.2f}MB)")
 
-        if len(all_headers) <= count:
-            # Return all instances if we have fewer than requested
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Series has {len(all_headers)} instances, less than requested {count}")
-            selected = all_headers
+        # Sort all instances by z-position
+        def get_z_position(item):
+            instance_uid, ds = item
+            if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
+                return float(ds.ImagePositionPatient[2])
+            elif hasattr(ds, 'InstanceNumber'):
+                return float(ds.InstanceNumber)
+            elif hasattr(ds, 'SliceLocation'):
+                return float(ds.SliceLocation)
+            return 0
+
+        sorted_headers = sorted(all_headers, key=get_z_position)
+
+        # Apply range filtering if not using full range
+        if start > 0.0 or end < 1.0:
+            if len(sorted_headers) > 0:
+                z_positions = [get_z_position(item) for item in sorted_headers]
+                min_z = min(z_positions)
+                max_z = max(z_positions)
+                z_range = max_z - min_z
+
+                # Map normalized range [0, 1] to actual z-values
+                start_z = min_z + (z_range * start)
+                end_z = min_z + (z_range * end)
+
+                # Filter instances within the range (inclusive on both ends)
+                filtered_headers = [
+                    item for item in sorted_headers
+                    if start_z <= get_z_position(item) <= end_z
+                ]
+
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Range filter: {start:.1%} to {end:.1%} ({start_z:.2f} to {end_z:.2f}) selected {len(filtered_headers)} of {len(sorted_headers)} instances")
+            else:
+                filtered_headers = sorted_headers
         else:
-            # Sort all instances by z-position
-            def get_z_position(item):
-                instance_uid, ds = item
-                if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
-                    return float(ds.ImagePositionPatient[2])
-                elif hasattr(ds, 'InstanceNumber'):
-                    return float(ds.InstanceNumber)
-                elif hasattr(ds, 'SliceLocation'):
-                    return float(ds.SliceLocation)
-                return 0
+            filtered_headers = sorted_headers
 
-            sorted_headers = sorted(all_headers, key=get_z_position)
-
-            # Select evenly distributed instances from sorted list (includes first and last)
-            indices = [int(i * (len(sorted_headers) - 1) / (count - 1)) for i in range(count)]
-            selected = [sorted_headers[i] for i in indices]
+        # Select distributed instances from filtered list
+        if len(filtered_headers) <= count:
+            # Return all instances if we have fewer than requested (no duplicates)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Filtered range has {len(filtered_headers)} instances, less than requested {count}")
+            selected = filtered_headers
+        else:
+            # Select evenly distributed instances (includes first and last to avoid fencepost errors)
+            indices = [int(i * (len(filtered_headers) - 1) / (count - 1)) for i in range(count)]
+            selected = [filtered_headers[i] for i in indices]
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Selected {len(selected)} instances from {len(all_headers)} total")

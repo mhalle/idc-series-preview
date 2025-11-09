@@ -127,6 +127,20 @@ def main():
         help="Preset contrast settings (auto will auto-detect from image)"
     )
 
+    # Range selection arguments
+    parser.add_argument(
+        "--start",
+        type=float,
+        default=0.0,
+        help="Start of normalized z-position range (0.0-1.0). Default: 0.0 (beginning of series)"
+    )
+    parser.add_argument(
+        "--end",
+        type=float,
+        default=1.0,
+        help="End of normalized z-position range (0.0-1.0). Default: 1.0 (end of series)"
+    )
+
     # Output format arguments
     parser.add_argument(
         "-q", "--quality",
@@ -186,6 +200,17 @@ def main():
             logger.error("Output file must be .webp or .jpg/.jpeg")
             return 1
 
+        # Validate range parameters
+        if not (0.0 <= args.start <= 1.0):
+            logger.error("--start must be between 0.0 and 1.0")
+            return 1
+        if not (0.0 <= args.end <= 1.0):
+            logger.error("--end must be between 0.0 and 1.0")
+            return 1
+        if args.start > args.end:
+            logger.error("--start must be less than or equal to --end")
+            return 1
+
         # Determine tile height
         tile_height = args.tile_height if args.tile_height else args.tile_width
 
@@ -208,6 +233,8 @@ def main():
             logger.info(f"Root: {args.root}")
             logger.info(f"Tile grid: {args.tile_width}x{tile_height}")
             logger.info(f"Tile width: {args.image_width}px")
+            if args.start > 0.0 or args.end < 1.0:
+                logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
 
         # Retrieve DICOM instances
         if args.verbose:
@@ -215,7 +242,9 @@ def main():
         retriever = DICOMRetriever(args.root)
         instances = retriever.get_instances_distributed(
             series_uid,
-            args.tile_width * tile_height
+            args.tile_width * tile_height,
+            start=args.start,
+            end=args.end
         )
 
         if not instances:

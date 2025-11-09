@@ -68,6 +68,18 @@ Output image file path. Must have a `.webp`, `.jpg`, or `.jpeg` extension.
 `--window-center CENTER`
 : Window center for manual contrast adjustment (in Hounsfield Units).
 
+### Range Selection Options
+
+`--start FLOAT`
+: Start of normalized z-position range (0.0-1.0). Where 0.0 is the beginning (superior/head) and 1.0 is the end (inferior/tail) of the series.
+: Default: `0.0`
+: Examples: `0.0` (start from beginning), `0.2` (start at 20%), `0.5` (start at middle)
+
+`--end FLOAT`
+: End of normalized z-position range (0.0-1.0).
+: Default: `1.0`
+: Examples: `1.0` (end at end), `0.5` (end at middle), `0.75` (end at 75%)
+
 ### Output Options
 
 `-q, --quality LEVEL`
@@ -128,6 +140,24 @@ dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
 dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
 ```
 
+### Range selection - middle 60% of series
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --start 0.2 --end 0.8
+```
+
+### Range selection - first half of series
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --start 0.0 --end 0.5
+```
+
+### Range selection - last quarter of series with specific contrast
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --start 0.75 --end 1.0 --contrast-preset bone
+```
+
 ## BEHAVIOR
 
 ### Instance Selection
@@ -139,6 +169,22 @@ By default, the tool selects a distributed subset of instances from the series t
   1. Sorted by z-position (anatomical location) using `ImagePositionPatient`, `InstanceNumber`, or `SliceLocation`
   2. Evenly distributed across the full z-range
   3. Always includes the first and last instance in the series
+
+### Range Selection
+
+When `--start` and `--end` are specified, the selection process is modified:
+
+1. All instances are sorted by z-position as usual
+2. The min and max z-values are identified
+3. The normalized range is mapped to actual z-values:
+   - start_z = min_z + (max_z - min_z) × start
+   - end_z = min_z + (max_z - min_z) × end
+4. Only instances with z-position between start_z and end_z (inclusive) are selected
+5. From the filtered set, instances are distributed as usual
+6. If fewer instances are found than tiles requested, all are used (no duplicates)
+7. Remaining tiles are filled with blank/black images
+
+**Note:** Range values are normalized (0.0-1.0) to be independent of actual z-positions, making ranges portable across different series.
 
 ### Contrast/Window Settings
 
