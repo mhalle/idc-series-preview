@@ -29,12 +29,13 @@ pip install obstore pydicom numpy pillow
 
 ### AWS Credentials for S3 Access
 
-The IDC S3 bucket requires AWS credentials for list operations (even for public data). Configure credentials before use:
+The IDC S3 bucket is publicly accessible but requires AWS credentials for obstore to make signed requests. Configure credentials before use:
 
-**Option 1: AWS CLI**
+**Option 1: AWS CLI** (Recommended)
 ```bash
 aws configure
 # Enter your AWS Access Key ID and Secret Access Key
+# Even free AWS tier credentials work for reading public IDC data
 ```
 
 **Option 2: Environment Variables**
@@ -50,7 +51,13 @@ aws_access_key_id = your_key_id
 aws_secret_access_key = your_secret_key
 ```
 
-Note: Even free AWS tier credentials work for reading public IDC data.
+**Verify Access Without Credentials**
+You can test if the bucket is accessible using s5cmd with unsigned requests:
+```bash
+s5cmd --no-sign-request ls 's3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/*'
+```
+
+If this works, the data is publicly accessible. Configure AWS credentials above to use with dicom-mosaic.
 
 ## Usage
 
