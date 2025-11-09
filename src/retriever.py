@@ -31,6 +31,14 @@ class DICOMRetriever:
             # Local filesystem - add file:// prefix
             root_path = f"file://{root_path}"
 
+        # For S3, use anonymous access (skip signature)
+        if root_path.startswith("s3://"):
+            from obstore.store import S3Store
+            return S3Store.from_url(
+                root_path,
+                config={"aws_skip_signature": "true"}
+            )
+
         return from_url(root_path)
 
     def _get_instance_path(self, series_uid: str, instance_uid: str) -> str:
@@ -104,7 +112,9 @@ class DICOMRetriever:
         """
         try:
             # List objects in the series directory
-            results = self.store.list(series_uid)
+            # Use prefix parameter for cleaner API
+            prefix = f"{series_uid}/" if not series_uid.endswith("/") else series_uid
+            results = self.store.list(prefix=prefix)
             instances = []
 
             # obstore.list returns an iterator that yields batches
@@ -129,15 +139,7 @@ class DICOMRetriever:
             return instances
 
         except Exception as e:
-            error_str = str(e)
-            if "403" in error_str or "InvalidAccessKeyId" in error_str:
-                logger.error(f"Access denied listing series {series_uid}. This S3 bucket requires AWS credentials.")
-                logger.error(f"Configure credentials with: aws configure")
-            elif "EC2" in error_str or "169.254.169.254" in error_str:
-                logger.error(f"Could not retrieve credentials from EC2 metadata. Provide AWS credentials.")
-                logger.error(f"Set: export AWS_ACCESS_KEY_ID=... && export AWS_SECRET_ACCESS_KEY=...")
-            else:
-                logger.error(f"Error listing instances for series {series_uid}: {e}")
+            logger.error(f"Error listing instances for series {series_uid}: {e}")
             return []
 
     def get_instances_distributed(
