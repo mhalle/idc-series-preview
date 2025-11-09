@@ -136,12 +136,16 @@ class MosaicGenerator:
             window_settings['window_center'],
         )
 
+        # Ensure uint8 dtype
+        if windowed.dtype != np.uint8:
+            windowed = windowed.astype(np.uint8)
+
         # Handle multi-frame or RGB data
         if windowed.ndim == 3:
             # Multi-frame or RGB - use first frame
             windowed = windowed[0] if windowed.shape[0] == 1 else windowed
 
-        # Convert to PIL Image
+        # Convert to PIL Image with explicit 8-bit mode
         if windowed.ndim == 2:
             img = Image.fromarray(windowed, mode='L')
         else:
@@ -233,7 +237,7 @@ class MosaicGenerator:
                 continue
 
         if not images:
-            logger.error("No valid images could be processed")
+            logger.error("No valid images could be processed. This may occur if DICOM files use unsupported compression codecs (e.g., JPEG Extended with 12-bit precision).")
             return None
 
         if logger.isEnabledFor(logging.DEBUG):

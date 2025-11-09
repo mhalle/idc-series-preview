@@ -8,12 +8,27 @@ from obstore.store import from_url
 import pydicom
 from io import BytesIO
 
-
 logger = logging.getLogger(__name__)
+
+
+def _configure_pixel_data_handlers():
+    """Configure pydicom to use gdcm for pixel data if available."""
+    try:
+        # Try to import gdcm to check if it's available
+        import gdcm  # noqa: F401
+        # If gdcm is available, set it as the preferred handler
+        # This ensures JPEG Extended and other advanced codecs can be decoded
+        pydicom.config.settings.pixel_data_handlers = ['gdcm', 'pillow']
+        logger.debug("Configured pydicom to use gdcm for pixel data decoding")
+    except ImportError:
+        # gdcm not available, use default handlers (pillow only)
+        logger.debug("gdcm not available, using default pixel data handlers")
 
 
 class DICOMRetriever:
     """Retrieve DICOM instances from S3, HTTP, or local storage."""
+
+    _handlers_configured = False
 
     def __init__(self, root_path: str):
         """
@@ -22,6 +37,11 @@ class DICOMRetriever:
         Args:
             root_path: Root path for DICOM files (S3, HTTP, or local path)
         """
+        # Configure pixel data handlers once at first initialization
+        if not DICOMRetriever._handlers_configured:
+            _configure_pixel_data_handlers()
+            DICOMRetriever._handlers_configured = True
+
         self.root_path = root_path
         self.store = self._init_store(root_path)
 
@@ -141,6 +161,11 @@ class DICOMRetriever:
                 meta_data = self.store.head(path)
                 size = meta_data.get('size') if isinstance(meta_data, dict) else meta_data.size
                 return ds, size
+            except NotImplementedError as e:
+                # Unsupported compression, skip this file
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Cannot read DICOM with unsupported compression {path}: {e}")
+                return None, 0
             except Exception as e:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Failed to parse DICOM headers for {path}: {e}")
@@ -151,6 +176,10 @@ class DICOMRetriever:
                     full_data = bytes(result.bytes())
                     ds = pydicom.dcmread(BytesIO(full_data), stop_before_pixels=True, force=True)
                     return ds, len(full_data)
+                except NotImplementedError as e2:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Cannot read DICOM with unsupported compression {path}: {e2}")
+                    return None, 0
                 except Exception as e2:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Failed to parse full DICOM file for {path}: {e2}")
@@ -332,6 +361,13 @@ class DICOMRetriever:
             ds = pydicom.dcmread(BytesIO(data), force=True)
             return ds
 
+        except NotImplementedError as e:
+            # Unsupported compression (e.g., JPEG Extended with 12-bit precision)
+            # Skip this instance, mosaic will be generated from decodable instances
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Skipping {instance_uid}: unsupported compression - {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error retrieving instance {series_uid}/{instance_uid}: {e}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Error retrieving instance {series_uid}/{instance_uid}: {e}")
             return None

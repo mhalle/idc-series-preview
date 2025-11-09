@@ -40,6 +40,9 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
+gdcm = [
+    "gdcm",
+]
 
 [project.scripts]
 dicom-mosaic = "dicom_mosaic:main"
