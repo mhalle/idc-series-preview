@@ -80,6 +80,12 @@ Output image file path. Must have a `.webp`, `.jpg`, or `.jpeg` extension.
 : Default: `1.0`
 : Examples: `1.0` (end at end), `0.5` (end at middle), `0.75` (end at 75%)
 
+`--position FLOAT`
+: Extract single image at normalized z-position (0.0-1.0) instead of creating a mosaic.
+: When specified, no tiling is performed - outputs a single image at `--image-width` width.
+: Cannot be used with `--start`, `--end`, `--tile-width`, or `--tile-height`.
+: Examples: `0.0` (beginning/superior), `0.5` (middle), `1.0` (end/inferior)
+
 ### Output Options
 
 `-q, --quality LEVEL`
@@ -156,6 +162,24 @@ dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
 ```
 dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.75 --end 1.0 --contrast-preset bone
+```
+
+### Single image extraction - beginning of series
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
+  --position 0.0
+```
+
+### Single image extraction - middle of series
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
+  --position 0.5
+```
+
+### Single image extraction - end of series with specific contrast
+```
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
+  --position 1.0 --contrast-preset lung
 ```
 
 ## BEHAVIOR

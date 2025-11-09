@@ -169,6 +169,51 @@ class MosaicGenerator:
         new_height = int(self.image_width * aspect_ratio)
         return img.resize((self.image_width, new_height), Image.Resampling.LANCZOS)
 
+    def create_single_image(
+        self, instance: Tuple[str, pydicom.Dataset], retriever=None, series_uid=None
+    ) -> Optional[Image.Image]:
+        """
+        Create a single image from a DICOM instance (no tiling).
+
+        Args:
+            instance: Tuple of (instance_uid, pydicom.Dataset)
+            retriever: Optional DICOMRetriever for fetching full instance data when headers only are present
+            series_uid: Series UID for fetching full instance data
+
+        Returns:
+            PIL Image, or None if creation failed
+        """
+        instance_uid, ds = instance
+
+        try:
+            pixel_array = self._extract_pixel_array(ds)
+            ds_for_windowing = ds
+
+            # If no pixel data and we have a retriever, fetch full instance
+            if pixel_array is None and retriever and series_uid:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Fetching full instance data for {instance_uid}")
+                ds_full = retriever.get_instance_data(series_uid, instance_uid)
+                if ds_full:
+                    pixel_array = self._extract_pixel_array(ds_full)
+                    ds_for_windowing = ds_full
+
+            if pixel_array is None:
+                logger.error(f"No pixel data for instance {instance_uid}")
+                return None
+
+            img = self._pixel_array_to_image(pixel_array, ds_for_windowing)
+            img = self._resize_image(img)
+
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Created single image {img.width}x{img.height}px from {instance_uid}")
+
+            return img
+
+        except Exception as e:
+            logger.error(f"Failed to process instance {instance_uid}: {e}")
+            return None
+
     def create_mosaic(
         self, instances: List[Tuple[str, pydicom.Dataset]], retriever=None, series_uid=None
     ) -> Optional[Image.Image]:

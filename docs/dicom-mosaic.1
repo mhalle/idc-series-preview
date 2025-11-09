@@ -102,6 +102,15 @@ End of normalized z-position range (0.0-1.0).
 Default: 1.0
 .br
 Examples: 1.0 (end), 0.5 (middle), 0.75 (75%)
+.TP
+.B \-\-position \fIFLOAT\fR
+Extract single image at normalized z-position (0.0-1.0) instead of creating a mosaic.
+.br
+When specified, no tiling is performed - outputs a single image at --image-width width.
+.br
+Cannot be used with --start, --end, --tile-width, or --tile-height.
+.br
+Examples: 0.0 (beginning/superior), 0.5 (middle), 1.0 (end/inferior)
 
 .SS Output Options
 .TP
@@ -176,6 +185,27 @@ Range selection \- last quarter with bone contrast:
 dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \\
 .br
   --start 0.75 --end 1.0 --contrast-preset bone
+.RE
+.TP
+Single image extraction \- beginning of series:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \\
+.br
+  --position 0.0
+.RE
+.TP
+Single image extraction \- middle of series:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \\
+.br
+  --position 0.5
+.RE
+.TP
+Single image extraction \- end of series with lung contrast:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \\
+.br
+  --position 1.0 --contrast-preset lung
 .RE
 
 .SH BEHAVIOR

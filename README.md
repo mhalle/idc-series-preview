@@ -109,6 +109,7 @@ Options:
   --window-center CENTER Manual window center (Hounsfield Units)
   --start FLOAT          Start of normalized z-position range 0.0-1.0 (default: 0.0)
   --end FLOAT            End of normalized z-position range 0.0-1.0 (default: 1.0)
+  --position FLOAT       Extract single image at normalized z-position 0.0-1.0 (no tiling)
   -q, --quality LEVEL    Output quality 0-100 (default: 25)
   -v, --verbose          Enable detailed logging
   --help                 Show this help message
@@ -161,6 +162,21 @@ dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
 ```bash
 dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.0 --end 0.25
+```
+
+### Extract single image at position (no tiling)
+```bash
+# Image at the beginning
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --position 0.0
+
+# Image at the middle
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --position 0.5
+
+# Image at the end
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --position 1.0
 ```
 
 ## Input Format
@@ -260,6 +276,42 @@ This is useful for:
 - Focusing on specific anatomical regions (e.g., upper/lower abdomen, proximal/distal limb)
 - Creating separate mosaics for different parts of a large series
 - Sampling specific slices without needing to know exact indices
+
+### Single Image Extraction
+
+The `--position` option extracts a single DICOM instance at a specific normalized z-position without creating a mosaic:
+
+- **Range**: 0.0 (beginning/superior) to 1.0 (end/inferior) of the series
+- **Output**: Single image at `--image-width` pixels wide, aspect ratio preserved
+- **No tiling**: Outputs just one image, not a grid
+- **Incompatible with**: `--start`, `--end`, `--tile-width`, `--tile-height`
+
+**How it works:**
+1. All instances sorted by z-position
+2. Position mapped to closest instance: `target_z = min_z + (max_z - min_z) × position`
+3. Instance with z-value closest to target_z is selected
+4. Image extracted, windowed, and resized to `--image-width`
+
+**Use cases:**
+- Extract key anatomical slice (e.g., --position 0.5 for middle image)
+- Sample representative images from different parts of series
+- Create individual images for presentation or comparison
+- Reference images for specific anatomical levels
+
+**Examples:**
+```bash
+# Superior slice at beginning
+dicom-mosaic <uid> superior.webp --position 0.0
+
+# Middle slice
+dicom-mosaic <uid> middle.webp --position 0.5
+
+# Inferior slice at end
+dicom-mosaic <uid> inferior.webp --position 1.0
+
+# Specific level with custom contrast
+dicom-mosaic <uid> image.webp --position 0.33 --contrast-preset bone
+```
 
 ## Supported DICOM Codecs
 

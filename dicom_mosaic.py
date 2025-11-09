@@ -140,6 +140,11 @@ def main():
         default=1.0,
         help="End of normalized z-position range (0.0-1.0). Default: 1.0 (end of series)"
     )
+    parser.add_argument(
+        "--position",
+        type=float,
+        help="Extract single image at normalized z-position (0.0-1.0). When specified, no tiling is performed."
+    )
 
     # Output format arguments
     parser.add_argument(
@@ -200,16 +205,26 @@ def main():
             logger.error("Output file must be .webp or .jpg/.jpeg")
             return 1
 
-        # Validate range parameters
-        if not (0.0 <= args.start <= 1.0):
-            logger.error("--start must be between 0.0 and 1.0")
-            return 1
-        if not (0.0 <= args.end <= 1.0):
-            logger.error("--end must be between 0.0 and 1.0")
-            return 1
-        if args.start > args.end:
-            logger.error("--start must be less than or equal to --end")
-            return 1
+        # Validate position parameter
+        if args.position is not None:
+            if not (0.0 <= args.position <= 1.0):
+                logger.error("--position must be between 0.0 and 1.0")
+                return 1
+            if args.start != 0.0 or args.end != 1.0:
+                logger.error("--position cannot be used with --start or --end")
+                return 1
+
+        # Validate range parameters (only if not using position)
+        if args.position is None:
+            if not (0.0 <= args.start <= 1.0):
+                logger.error("--start must be between 0.0 and 1.0")
+                return 1
+            if not (0.0 <= args.end <= 1.0):
+                logger.error("--end must be between 0.0 and 1.0")
+                return 1
+            if args.start > args.end:
+                logger.error("--start must be less than or equal to --end")
+                return 1
 
         # Determine tile height
         tile_height = args.tile_height if args.tile_height else args.tile_width
@@ -231,50 +246,88 @@ def main():
             logger.info(f"Starting DICOM mosaic generation")
             logger.info(f"Series UID: {series_uid}")
             logger.info(f"Root: {args.root}")
-            logger.info(f"Tile grid: {args.tile_width}x{tile_height}")
-            logger.info(f"Tile width: {args.image_width}px")
-            if args.start > 0.0 or args.end < 1.0:
-                logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
 
-        # Retrieve DICOM instances
-        if args.verbose:
-            logger.info("Retrieving DICOM instances...")
+        # Initialize retriever
         retriever = DICOMRetriever(args.root)
-        instances = retriever.get_instances_distributed(
-            series_uid,
-            args.tile_width * tile_height,
-            start=args.start,
-            end=args.end
-        )
 
-        if not instances:
-            logger.error(f"No DICOM instances found for series {series_uid}")
-            return 1
+        # Handle position mode (single image) vs range/mosaic mode
+        if args.position is not None:
+            if args.verbose:
+                logger.info(f"Extracting single image at position {args.position:.1%}")
 
-        if args.verbose:
-            logger.info(f"Retrieved {len(instances)} instances")
+            # Retrieve single instance at position
+            if args.verbose:
+                logger.info("Retrieving DICOM instance...")
+            instance = retriever.get_instance_at_position(series_uid, args.position)
 
-        # Generate mosaic
-        if args.verbose:
-            logger.info("Generating mosaic...")
-        generator = MosaicGenerator(
-            tile_width=args.tile_width,
-            tile_height=tile_height,
-            image_width=args.image_width,
-            window_settings=window_settings
-        )
+            if not instance:
+                logger.error(f"No DICOM instance found at position {args.position}")
+                return 1
 
-        mosaic_image = generator.create_mosaic(instances, retriever, series_uid)
+            if args.verbose:
+                instance_uid, _ = instance
+                logger.info(f"Retrieved instance {instance_uid}")
 
-        if not mosaic_image:
-            logger.error("Failed to generate mosaic")
-            return 1
+            # Generate single image (no mosaic)
+            if args.verbose:
+                logger.info("Generating image...")
+            generator = MosaicGenerator(
+                image_width=args.image_width,
+                window_settings=window_settings
+            )
+
+            output_image = generator.create_single_image(instance, retriever, series_uid)
+
+            if not output_image:
+                logger.error("Failed to generate image")
+                return 1
+        else:
+            # Range/mosaic mode
+            if args.verbose:
+                logger.info(f"Tile grid: {args.tile_width}x{tile_height}")
+                logger.info(f"Tile width: {args.image_width}px")
+                if args.start > 0.0 or args.end < 1.0:
+                    logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
+
+            # Retrieve DICOM instances
+            if args.verbose:
+                logger.info("Retrieving DICOM instances...")
+            instances = retriever.get_instances_distributed(
+                series_uid,
+                args.tile_width * tile_height,
+                start=args.start,
+                end=args.end
+            )
+
+            if not instances:
+                logger.error(f"No DICOM instances found for series {series_uid}")
+                return 1
+
+            if args.verbose:
+                logger.info(f"Retrieved {len(instances)} instances")
+
+            # Generate mosaic
+            if args.verbose:
+                logger.info("Generating mosaic...")
+            generator = MosaicGenerator(
+                tile_width=args.tile_width,
+                tile_height=tile_height,
+                image_width=args.image_width,
+                window_settings=window_settings
+            )
+
+            output_image = generator.create_mosaic(instances, retriever, series_uid)
+
+            if not output_image:
+                logger.error("Failed to generate mosaic")
+                return 1
 
         # Save output
         if args.verbose:
-            logger.info(f"Saving mosaic to {args.output}...")
+            mode = "image" if args.position is not None else "mosaic"
+            logger.info(f"Saving {mode} to {args.output}...")
         generator.save_image(
-            mosaic_image,
+            output_image,
             args.output,
             quality=args.quality
         )

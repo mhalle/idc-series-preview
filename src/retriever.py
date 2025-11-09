@@ -375,6 +375,88 @@ class DICOMRetriever:
             logger.debug(f"Total S3 data transferred: {total_bytes / 1024 / 1024:.2f}MB ({headers_bytes / 1024 / 1024:.2f}MB headers + {pixel_bytes / 1024 / 1024:.2f}MB pixel data)")
         return results
 
+    def get_instance_at_position(
+        self, series_uid: str, position: float
+    ) -> Optional[Tuple[str, pydicom.Dataset]]:
+        """
+        Get a single DICOM instance at a specific normalized z-position.
+
+        Args:
+            series_uid: The DICOM series UID
+            position: Normalized z-position (0.0-1.0), where 0.0 is the beginning
+                      and 1.0 is the end of the series
+
+        Returns:
+            Tuple of (instance_uid, pydicom.Dataset) or None if retrieval failed.
+            Returns the instance closest to the specified position.
+        """
+        all_instances = self.list_instances(series_uid)
+
+        if not all_instances:
+            logger.error(f"No instances found for series {series_uid}")
+            return None
+
+        # Get headers for all instances
+        all_headers = []
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(self._get_instance_headers, series_uid, uid): uid
+                for uid in all_instances
+            }
+
+            for future in as_completed(futures):
+                instance_uid = futures[future]
+                try:
+                    ds, size = future.result()
+                    if ds is not None:
+                        all_headers.append((instance_uid, ds))
+                except Exception as e:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Failed to retrieve header for {instance_uid}: {e}")
+
+        if not all_headers:
+            logger.error(f"No instances could be retrieved for series {series_uid}")
+            return None
+
+        # Sort by z-position
+        def get_z_position(item):
+            instance_uid, ds = item
+            if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
+                return float(ds.ImagePositionPatient[2])
+            elif hasattr(ds, 'InstanceNumber'):
+                return float(ds.InstanceNumber)
+            elif hasattr(ds, 'SliceLocation'):
+                return float(ds.SliceLocation)
+            return 0
+
+        sorted_headers = sorted(all_headers, key=get_z_position)
+
+        # Find instance closest to position
+        z_positions = [get_z_position(item) for item in sorted_headers]
+        min_z = min(z_positions)
+        max_z = max(z_positions)
+        z_range = max_z - min_z
+
+        # Map normalized position to actual z-value
+        target_z = min_z + (z_range * position)
+
+        # Find closest instance
+        closest_item = min(sorted_headers, key=lambda item: abs(get_z_position(item) - target_z))
+        instance_uid, ds = closest_item
+        target_z_actual = get_z_position(closest_item)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Position {position:.1%} maps to z={target_z:.2f}, found closest at z={target_z_actual:.2f}")
+
+        # Get full pixel data for this instance
+        full_ds = self.get_instance_data(series_uid, instance_uid)
+        if full_ds is None:
+            logger.error(f"Could not retrieve pixel data for instance {instance_uid}")
+            return None
+
+        return (instance_uid, full_ds)
+
     def get_instance_data(
         self, series_uid: str, instance_uid: str
     ) -> Optional[pydicom.Dataset]:
