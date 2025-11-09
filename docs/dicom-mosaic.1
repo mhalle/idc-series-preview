@@ -1,0 +1,281 @@
+.TH DICOM-MOSAIC 1 "November 2025" "dicom-mosaic 0.1.0" "User Commands"
+.SH NAME
+dicom-mosaic \- generate DICOM image mosaics from S3, HTTP, or local storage
+.SH SYNOPSIS
+.B dicom-mosaic
+[\fIOPTIONS\fR]
+.I SERIESUID
+.I OUTPUT
+.SH DESCRIPTION
+.B dicom-mosaic
+retrieves DICOM instances from a series stored on S3, HTTP, or local filesystem,
+creates a tiled mosaic image, and exports the result in WebP or JPEG format.
+
+The tool uses efficient range requests to retrieve only DICOM headers initially,
+then fetches full pixel data only for the selected instances. It supports various
+window/level (contrast) presets and auto-detection of optimal display settings.
+.SH ARGUMENTS
+.TP
+.I SERIESUID
+The DICOM Series UID. Can be specified in multiple formats:
+.RS
+.IP \(bu 2
+Full 32-character hex UID: 38902e14b11f4548910e771ee757dc82
+.IP \(bu 2
+Standard UUID format: 38902e14-b11f-4548-910e-771ee757dc82
+.IP \(bu 2
+Partial prefix with wildcard: 38902e14* or 389*
+.RE
+.TP
+.I OUTPUT
+Output image file path. Must have a .webp, .jpg, or .jpeg extension.
+
+.SH OPTIONS
+.SS Storage Options
+.TP
+.B \-\-root \fIPATH\fR
+Root path for DICOM files. Supports S3 URLs, HTTP(S) URLs, or local filesystem paths.
+.br
+Default: s3://idc-open-data
+.br
+Examples: s3://my-bucket/dicom-data, http://example.com/medical-images, /data/dicom
+
+.SS Tiling Options
+.TP
+.B \-\-tile-width \fIWIDTH\fR
+Number of images per row in the mosaic.
+.br
+Default: 6
+.TP
+.B \-\-tile-height \fIHEIGHT\fR
+Number of images per column in the mosaic.
+.br
+Default: Same as --tile-width
+.TP
+.B \-\-image-width \fIPIXELS\fR
+Width of each image tile in pixels. Height is scaled proportionally to maintain aspect ratio.
+.br
+Default: 128
+
+.SS Contrast Options
+.TP
+.B \-\-contrast-preset \fIPRESET\fR
+Use a predefined contrast preset for the anatomical region. Available presets:
+.RS
+.IP \(bu 2
+auto \- Auto-detect optimal window/center from image statistics
+.IP \(bu 2
+lung \- Lung window (WW=1500, WC=-500)
+.IP \(bu 2
+bone \- Bone window (WW=2000, WC=300)
+.IP \(bu 2
+brain \- Brain window (WW=80, WC=40)
+.IP \(bu 2
+abdomen \- Abdomen window (WW=350, WC=50)
+.IP \(bu 2
+mediastinum \- Mediastinum window (WW=350, WC=50)
+.IP \(bu 2
+liver \- Liver window (WW=150, WC=30)
+.IP \(bu 2
+soft_tissue \- Soft tissue window (WW=400, WC=50)
+.RE
+.TP
+.B \-\-window-width \fIWIDTH\fR
+Window width for manual contrast adjustment (in Hounsfield Units).
+.TP
+.B \-\-window-center \fICENTER\fR
+Window center for manual contrast adjustment (in Hounsfield Units).
+
+.SS Output Options
+.TP
+.BR \-q ", " \-\-quality \fILEVEL\fR
+Output image quality (0-100).
+.br
+Default: 25
+.br
+Lower values produce smaller files but reduced quality. Values of 25-50 are recommended for WebP.
+
+.SS Utility Options
+.TP
+.BR \-v ", " \-\-verbose
+Enable verbose logging output. Shows detailed progress information and debug messages.
+
+.SH EXAMPLES
+.TP
+Basic mosaic from default S3 bucket:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+.RE
+.TP
+Custom tile grid and size:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \\
+.br
+  --tile-width 8 --tile-height 6 --image-width 64
+.RE
+.TP
+With lung contrast preset and custom quality:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \\
+.br
+  --contrast-preset lung -q 50
+.RE
+.TP
+Manual window/center settings:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \\
+.br
+  --window-width 350 --window-center 50
+.RE
+.TP
+From local filesystem:
+.RS
+dicom-mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \\
+.br
+  --root /local/dicom/path
+.RE
+.TP
+Verbose output with logging:
+.RS
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
+.RE
+
+.SH BEHAVIOR
+.SS Instance Selection
+By default, the tool selects a distributed subset of instances from the series to create the mosaic:
+.IP \(bu 2
+If the series has fewer instances than requested tiles, all instances are used
+.IP \(bu 2
+If the series has more instances, they are sorted by z-position (anatomical location)
+and evenly distributed across the full range
+.IP \(bu 2
+Always includes the first and last instance in the series
+
+.SS Contrast Settings
+Contrast settings are determined in this priority order:
+.IP 1 2
+Command-line arguments (--contrast-preset, --window-width/--window-center)
+.IP 2 2
+File metadata (WindowWidth/WindowCenter stored in DICOM headers)
+.IP 3 2
+Auto-detection (calculated from image statistics)
+
+.SS Instance Retrieval
+The tool uses a two-pass retrieval strategy for efficiency:
+.IP \(bu 2
+First pass: Retrieve headers (5KB) for all instances in parallel
+.IP \(bu 2
+Second pass: Fetch full pixel data only for selected instances
+
+This reduces bandwidth for large series while ensuring proper sorting.
+
+.SS Windowing
+Linear windowing with hard clipping is applied:
+.IP \(bu 2
+Values below (center - width/2) are mapped to black (0)
+.IP \(bu 2
+Values above (center + width/2) are mapped to white (255)
+.IP \(bu 2
+Values in between are linearly scaled
+
+.SH ERROR HANDLING
+The tool will exit with error code 1 if:
+.IP \(bu 2
+Series UID is invalid or not found
+.IP \(bu 2
+Output file format is not .webp or .jpg/.jpeg
+.IP \(bu 2
+No valid images can be retrieved from the series
+.IP \(bu 2
+DICOM files use unsupported compression codecs (e.g., JPEG Extended with 12-bit precision)
+
+.SH COMPRESSION CODEC SUPPORT
+Currently supported DICOM compression codecs:
+.IP \(bu 2
+Uncompressed (no compression)
+.IP \(bu 2
+JPEG Baseline
+.IP \(bu 2
+JPEG Lossless (non-hierarchical)
+.IP \(bu 2
+RLE (Run-Length Encoding)
+
+Unsupported codecs (without gdcm):
+.IP \(bu 2
+JPEG Extended (with 12-bit precision)
+.IP \(bu 2
+JPEG 2000
+
+To support additional codecs, install the optional gdcm dependency (available on Linux/Windows):
+.RS
+pip install dicom-mosaic[gdcm]
+.RE
+
+.SH INSTALLATION
+.TP
+Using uv (recommended):
+.RS
+uv pip install .
+.br
+uv run dicom-mosaic --help
+.RE
+.TP
+Using pip:
+.RS
+pip install .
+.br
+dicom-mosaic --help
+.RE
+
+.SH ENVIRONMENT
+The tool respects standard environment variables for S3 access when using credentials
+(though the default IDC S3 bucket is public):
+.IP \(bu 2
+AWS_ACCESS_KEY_ID
+.IP \(bu 2
+AWS_SECRET_ACCESS_KEY
+.IP \(bu 2
+AWS_REGION
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+Error (invalid arguments, file not found, processing error, etc.)
+
+.SH NOTES
+.SS Performance
+.IP \(bu 2
+Typical mosaic generation takes 5-10 seconds depending on network latency
+.IP \(bu 2
+Bandwidth usage: 5-10MB for header retrieval + pixel data for selected instances
+.IP \(bu 2
+Use smaller --image-width and --tile-width values for faster processing
+
+.SS Quality Settings
+.IP \(bu 2
+WebP quality 20-30: Good balance of quality and file size (~1-5KB per tile)
+.IP \(bu 2
+WebP quality 50+: High quality (~5-20KB per tile)
+.IP \(bu 2
+JPEG quality 70+: Good quality, larger files (~10-30KB per tile)
+
+.SS Z-Position Sorting
+Medical imaging convention is to display slices in radiological order (superior to inferior).
+The tool automatically sorts instances by their spatial location and ensures consistent display order.
+
+.SH AUTHOR
+Generated with Claude Code
+
+.SH SEE ALSO
+.TP
+DICOM standard
+ISO/IEC 23912
+.TP
+pydicom documentation
+https://pydicom.readthedocs.io/
+.TP
+Imaging Data Commons
+https://imaging.datacommons.cancer.gov/

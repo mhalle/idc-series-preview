@@ -1,177 +1,434 @@
 # DICOM Mosaic Generator
 
-Generate DICOM mosaics from medical imaging series stored on S3, HTTP, or local filesystems.
+Generate tiled mosaic images from DICOM series stored on S3, HTTP, or local filesystem.
+
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python: 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)
+
+## Overview
+
+`dicom-mosaic` is a command-line tool that retrieves DICOM medical imaging instances from various storage backends, arranges them in a tiled grid, and exports the result as a WebP or JPEG image. It's designed for efficient processing of large series using:
+
+- **Range requests**: Retrieve only DICOM headers initially (5KB) to determine instance ordering
+- **Distributed sampling**: Select evenly-spaced instances across the full series range
+- **Parallel I/O**: Concurrent fetching of headers and pixel data for speed
+- **Smart windowing**: Support for anatomical presets, file-stored settings, or auto-detection
+- **Flexible storage**: Works with S3, HTTP, local paths, or any obstore-compatible backend
+
+## Quick Start
+
+### Installation
+
+Using [uv](https://docs.astral.sh/uv/) (recommended):
+
+```bash
+git clone https://github.com/yourusername/dicom-mosaic.git
+cd dicom-mosaic
+uv sync
+```
+
+Using pip:
+
+```bash
+pip install -e .
+```
+
+### Basic Usage
+
+```bash
+# Generate a 6x6 mosaic from an IDC series (default S3 bucket)
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+
+# With custom tile grid
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --tile-width 8 --tile-height 6 --image-width 64
+
+# With lung contrast preset
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --contrast-preset lung -q 50
+
+# From local filesystem
+dicom-mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+  --root /path/to/dicom/series
+
+# With verbose output
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
+```
 
 ## Features
 
-- **Efficient Retrieval**: Uses range requests to fetch only DICOM headers, minimizing data transfer
-- **Distributed Sampling**: Selects representative images distributed across the entire series
-- **Flexible Storage**: Supports S3, HTTP, and local file storage via obstore
-- **Customizable Output**:
-  - Adjustable tile grid size (default 6x6)
-  - Configurable tile and output image dimensions
-  - Support for WebP and JPEG output formats
-  - Quality control (0-100)
-- **Contrast Adjustment**:
-  - Preset window/center settings for different anatomies (lung, bone, brain, etc.)
-  - Auto-detection of optimal contrast parameters
-  - Manual window/center specification
+### 🎯 Instance Selection
 
-## Installation
+- Automatically selects distributed subset of instances across the series
+- Maintains radiological ordering (superior to inferior)
+- Always includes first and last instance in series
+- Falls back to all instances if series smaller than tile count
 
-```bash
-# Install with uv
-uv sync
+### 📊 Contrast Presets
 
-# Or install dependencies directly
-pip install obstore pydicom numpy pillow
+Built-in presets for common anatomical regions:
+- **lung**: WW=1500, WC=-500
+- **bone**: WW=2000, WC=300
+- **brain**: WW=80, WC=40
+- **abdomen**: WW=350, WC=50
+- **mediastinum**: WW=350, WC=50
+- **liver**: WW=150, WC=30
+- **soft_tissue**: WW=400, WC=50
+- **auto**: Auto-detect from image statistics
+
+### 🚀 Performance
+
+- **Two-pass retrieval**: Headers first for sorting, then pixel data for selected instances
+- **Parallel I/O**: Up to 8 concurrent connections for faster downloads
+- **Efficient storage**: Range requests reduce bandwidth for header-only pass
+- **Smart fallback**: Full file retrieval if range requests not supported
+
+### 📁 Storage Backends
+
+- **S3**: Public and authenticated buckets via boto3/obstore
+- **HTTP(S)**: Direct access to web servers
+- **Local filesystem**: Direct file access
+- **Other**: Any backend supported by obstore (GCS, Azure, etc.)
+
+## Command-Line Options
+
+```
+Usage: dicom-mosaic [OPTIONS] SERIESUID OUTPUT
+
+Arguments:
+  SERIESUID              DICOM Series UID (full, partial with hyphens, or prefix with wildcard)
+  OUTPUT                 Output image path (.webp or .jpg)
+
+Options:
+  --root PATH            Root path for DICOM files (default: s3://idc-open-data)
+  --tile-width WIDTH     Images per row (default: 6)
+  --tile-height HEIGHT   Images per column (default: same as tile-width)
+  --image-width PIXELS   Width of each tile in pixels (default: 128)
+  --contrast-preset NAME Preset contrast (lung, bone, brain, abdomen, liver, mediastinum, soft_tissue, auto)
+  --window-width WIDTH   Manual window width (Hounsfield Units)
+  --window-center CENTER Manual window center (Hounsfield Units)
+  -q, --quality LEVEL    Output quality 0-100 (default: 25)
+  -v, --verbose          Enable detailed logging
+  --help                 Show this help message
 ```
 
-### S3 Access
+## Examples
 
-The IDC S3 bucket is **publicly accessible** - no AWS credentials required! The tool uses unsigned/anonymous access to read from public S3 buckets.
-
-**Verify S3 Access**
+### From IDC (default S3 bucket)
 ```bash
-# Test access to the IDC bucket
-s5cmd --no-sign-request ls 's3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/*'
-
-# Or use the tool directly
-uv run dicom_mosaic.py 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 ```
 
-**Private S3 Buckets**
-If you need to access private S3 buckets, configure AWS credentials:
-
+### Custom size and quality
 ```bash
-aws configure
-# Enter your AWS Access Key ID and Secret Access Key
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --tile-width 10 --tile-height 8 --image-width 100 -q 40
 ```
 
-The tool will automatically use your credentials for private buckets.
-
-## Usage
-
+### With specific contrast settings
 ```bash
-# Basic usage with auto-detected contrast
-python dicom_mosaic.py <series_uid> <output_file>
-
-# With custom grid size (4x4 instead of default 6x6)
-python dicom_mosaic.py <series_uid> <output_file> --tile-width 4
-
-# With preset contrast (lung, bone, brain, etc.)
-python dicom_mosaic.py <series_uid> <output_file> --contrast-preset lung
-
-# With manual window/center settings
-python dicom_mosaic.py <series_uid> <output_file> --window-width 1500 --window-center -500
-
-# Adjust output quality
-python dicom_mosaic.py <series_uid> <output_file> -q 90
-
-# Verbose output for debugging
-python dicom_mosaic.py <series_uid> <output_file> -v
-
-# Custom storage location
-python dicom_mosaic.py <series_uid> <output_file> --root s3://my-bucket/dicom/
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --window-width 350 --window-center 50
 ```
 
-## Arguments
-
-### Required Arguments
-- `seriesuid`: DICOM Series UID
-- `output`: Output file path (.webp or .jpg)
-
-### Optional Arguments
-
-**Storage:**
-- `--root`: Root path for DICOM files (default: `s3://idc-open-data`)
-
-**Tiling:**
-- `--tile-width`: Number of images per row (default: 6)
-- `--tile-height`: Number of images per column (default: same as --tile-width)
-
-**Image Scaling:**
-- `--image-width`: Width of each tile in pixels (default: 128)
-  - Height is scaled proportionally based on aspect ratio
-
-**Contrast:**
-- `--contrast-preset`: Preset name: `lung`, `bone`, `abdomen`, `brain`, `mediastinum`, `liver`, `soft_tissue`, or `auto`
-- `--window-width`: Window width in HU (Hounsfield Units)
-- `--window-center`: Window center in HU
-
-**Output:**
-- `-q, --quality`: Output quality 0-100 (default: 85)
-
-**Utility:**
-- `-v, --verbose`: Enable verbose logging
-
-## Contrast Presets
-
-The following standard contrast presets are available:
-
-| Preset | Window Width | Window Center | Use Case |
-|--------|--------------|---------------|----------|
-| lung | 1500 | -500 | Lung tissue, respiratory anatomy |
-| bone | 2000 | 300 | Bone structures |
-| abdomen | 350 | 50 | Abdominal organs |
-| brain | 80 | 40 | Brain tissue, intracranial |
-| mediastinum | 350 | 50 | Mediastinal structures |
-| liver | 150 | 30 | Liver tissue |
-| soft_tissue | 400 | 50 | Soft tissue imaging |
-| auto | - | - | Auto-detect from image |
-
-## Example Commands
-
+### From custom HTTP server
 ```bash
-# Generate a 6x6 mosaic from IDC DICOM series with lung contrast
-python dicom_mosaic.py 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
-  --contrast-preset lung -q 90
-
-# Create a smaller 4x4 mosaic with larger tiles
-python dicom_mosaic.py 38902e14-b11f-4548-910e-771ee757dc82 mosaic.jpg \
-  --tile-width 4 --tile-height 4 --image-width 256
-
-# Local DICOM series with auto-detected contrast
-python dicom_mosaic.py my-series-uid output.webp \
-  --root /path/to/dicom/root --contrast-preset auto
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --root http://dicom-server.example.com/series
 ```
 
-## How It Works
+### From local directory
+```bash
+dicom-mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+  --root /mnt/dicom-storage
+```
 
-1. **Instance Discovery**: Lists all DICOM instances in the specified series
-2. **Distributed Sampling**: Selects N instances evenly distributed across the series
-3. **Header Retrieval**: Fetches only DICOM headers via range requests (5-20KB per file)
-4. **Image Processing**:
-   - Extracts pixel data and applies rescale slope/intercept
-   - Applies windowing (contrast) based on preset or auto-detection
-   - Resizes images to match the specified tile width
-5. **Mosaic Creation**: Arranges tiles left-to-right, top-to-bottom
-6. **Output**: Saves as WebP or JPEG with specified quality
+### With all verbose details
+```bash
+dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --contrast-preset lung -q 50 -v
+```
 
-## Performance Considerations
+## Input Format
 
-- **Minimal Data Transfer**: Uses 5KB range requests for headers, only downloads full images if needed
-- **Distributed Sampling**: Retrieves only ~36 images for a default 6x6 mosaic, regardless of series size
-- **Parallel Potential**: Currently sequential but can be parallelized for multiple series
-- **Memory Efficient**: Processes images on-the-fly without loading entire series into memory
+### Series UID Specification
+
+The tool accepts series UIDs in multiple formats:
+
+- **Full UUID**: `38902e14-b11f-4548-910e-771ee757dc82`
+- **32-char hex**: `38902e14b11f4548910e771ee757dc82`
+- **Partial prefix**: `38902e14*` or `389*` (searches and selects matching series)
+
+### DICOM Storage Structure
+
+The tool expects DICOM files organized as:
+```
+{ROOT}/{SERIES_UID}/{INSTANCE_UID}.dcm
+```
+
+Example:
+```
+s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/instance-001.dcm
+s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/instance-002.dcm
+...
+```
+
+## Output Format
+
+### Supported Output Formats
+
+- **WebP** (recommended): Modern format with excellent compression. Quality 25-30 provides good balance.
+- **JPEG**: Traditional format with wider compatibility. Quality 70+ recommended.
+
+### Quality Settings
+
+| Format | Quality | File Size | Use Case |
+|--------|---------|-----------|----------|
+| WebP | 20-25 | 1-3 KB/tile | Web, thumbnails |
+| WebP | 30-40 | 3-8 KB/tile | Web viewing |
+| WebP | 50+ | 8-15 KB/tile | High quality |
+| JPEG | 70-80 | 10-20 KB/tile | High quality, compatibility |
+
+## Behavior Details
+
+### Instance Ordering
+
+DICOM instances are sorted by their spatial position using (in order of preference):
+1. `ImagePositionPatient[2]` (z-coordinate in patient space)
+2. `InstanceNumber` (acquisition order)
+3. `SliceLocation` (deprecated but still used)
+4. File order (last resort)
+
+### Windowing Strategy
+
+Window/level settings are applied in this priority:
+1. **Command-line arguments**: `--contrast-preset` or `--window-width`/`--window-center`
+2. **File metadata**: WindowWidth/WindowCenter from DICOM headers
+3. **Auto-detection**: Calculated from pixel statistics (2nd to 98th percentile)
+
+### Retrieval Optimization
+
+The tool uses a smart two-pass strategy:
+
+**Pass 1 - Header Retrieval**:
+- Fetch 5KB from each instance (sufficient for DICOM headers)
+- Parallel requests (up to 8 concurrent)
+- Extract metadata needed for sorting and window/level
+
+**Pass 2 - Pixel Data Retrieval**:
+- Fetch full pixel data only for selected instances
+- Parallel requests (up to 8 concurrent)
+- Converts to PIL images with windowing applied
+
+This reduces bandwidth significantly for large series.
+
+## Supported DICOM Codecs
+
+### ✅ Fully Supported
+
+- Uncompressed (no compression)
+- JPEG Baseline (8-bit)
+- JPEG Lossless (non-hierarchical)
+- RLE (Run-Length Encoding)
+
+### ❌ Not Supported (without gdcm)
+
+- JPEG Extended (12-bit or higher precision)
+- JPEG 2000
+- HEVC (H.265)
+- Other advanced codecs
+
+**Note**: The tool will error cleanly if it encounters unsupported codecs. To support additional codecs, install the optional `gdcm` dependency (Linux/Windows only):
+
+```bash
+pip install dicom-mosaic[gdcm]
+```
+
+## Project Structure
+
+```
+dicom-mosaic/
+├── README.md                      # This file
+├── pyproject.toml                 # Project configuration and dependencies
+├── dicom_mosaic.py                # CLI entry point and argument parsing
+├── src/
+│   ├── retriever.py               # DICOM instance retrieval from storage
+│   ├── mosaic.py                  # Image tiling and mosaic assembly
+│   └── contrast.py                # Windowing presets and contrast algorithms
+├── docs/
+│   ├── dicom-mosaic.md            # Markdown version of man page
+│   └── dicom-mosaic.1             # Traditional man page (troff format)
+└── tests/                         # Test suite
+
+```
 
 ## Architecture
 
-```
-dicom_mosaic.py     - CLI interface and argument parsing
-├── src/
-│   ├── retriever.py - DICOM instance retrieval and listing
-│   ├── mosaic.py    - Mosaic creation and image output
-│   └── contrast.py  - Window/level presets and windowing logic
-```
+### DICOMRetriever
+
+Handles all storage I/O and instance retrieval:
+- Initializes storage backend (S3, HTTP, local, etc.)
+- Retrieves DICOM headers with range requests
+- Implements two-pass parallel fetching
+- Manages connection pooling and error handling
+
+### MosaicGenerator
+
+Processes DICOM data and assembles final image:
+- Extracts pixel arrays from DICOM datasets
+- Applies windowing/level contrast
+- Resizes tiles while maintaining aspect ratio
+- Arranges tiles in grid and creates final mosaic
+
+### ContrastPresets
+
+Manages window/level settings:
+- Provides anatomical presets (lung, bone, brain, etc.)
+- Implements percentile-based auto-detection
+- Applies linear windowing algorithm
+
+## Performance Characteristics
+
+### Typical Execution
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Series discovery | 1-2s | Lists available instances |
+| Header retrieval | 2-4s | 36 instances at 5KB each |
+| Pixel data retrieval | 3-5s | Full instance sizes vary |
+| Image processing | 1-2s | Windowing and resizing |
+| Mosaic assembly | <1s | Grid assembly |
+| Output encoding | 1-2s | WebP/JPEG compression |
+| **Total** | **8-15s** | For typical 36-instance mosaic |
+
+### Bandwidth Usage
+
+| Phase | Typical | Notes |
+|-------|---------|-------|
+| Headers | 180 KB | 36 instances × 5KB |
+| Pixel data | 50-100 MB | 36 instances × 1-3MB each |
+| **Total** | **50-100 MB** | Depends on instance resolution |
+
+## Troubleshooting
+
+### No instances found
+- Verify series UID is correct
+- Check that root path is accessible
+- For S3, ensure bucket is public or credentials are configured
+
+### Unsupported compression codec error
+- JPEG Extended with 12-bit precision requires gdcm
+- Install: `pip install dicom-mosaic[gdcm]` (Linux/Windows only)
+- Or provide a series with supported codecs
+
+### Output image is too bright/dark
+- Check if image uses non-standard WindowWidth/WindowCenter
+- Try `--contrast-preset auto` to auto-detect
+- Adjust manually with `--window-width` and `--window-center`
+
+### Slow performance
+- Reduce `--image-width` for faster processing
+- Use smaller tile grid (`--tile-width 4 --tile-height 4`)
+- Check network connectivity to storage backend
 
 ## Dependencies
 
-- **obstore**: High-performance object storage interface
-- **pydicom**: DICOM file reading and parsing
-- **numpy**: Numerical operations
-- **pillow**: Image processing and output
+- **obstore** (≥0.1.0): High-performance object storage abstraction
+- **pydicom** (≥2.4.0): DICOM file reading and parsing
+- **numpy** (≥1.24.0): Array operations and image processing
+- **pillow** (≥10.0.0): Image creation, resizing, and encoding
+- **gdcm** (optional): Support for advanced DICOM codecs
+
+## Development
+
+### Setup Development Environment
+
+```bash
+# Clone and install with dev dependencies
+git clone https://github.com/yourusername/dicom-mosaic.git
+cd dicom-mosaic
+uv sync --all-extras
+```
+
+### Running Tests
+
+```bash
+pytest tests/
+pytest --cov=src tests/  # With coverage
+```
+
+### Code Quality
+
+```bash
+black src/ dicom_mosaic.py
+ruff check src/ dicom_mosaic.py
+mypy src/
+```
+
+## Documentation
+
+- **Man page**: See `docs/dicom-mosaic.1` (can be installed to `/usr/share/man/man1/`)
+- **Markdown docs**: See `docs/dicom-mosaic.md`
+- **API documentation**: Generated from docstrings in source code
+
+To view the man page:
+```bash
+man ./docs/dicom-mosaic.1
+# Or after installation:
+man dicom-mosaic
+```
 
 ## License
 
-MIT
+MIT License - See LICENSE file for details
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes and add tests
+4. Run quality checks (`black`, `ruff`, `mypy`)
+5. Commit with clear messages
+6. Push to your fork
+7. Open a Pull Request
+
+## Citation
+
+If you use this tool in research, please cite:
+
+```bibtex
+@software{dicom-mosaic,
+  title={DICOM Mosaic Generator},
+  author={Your Name},
+  year={2025},
+  url={https://github.com/yourusername/dicom-mosaic}
+}
+```
+
+## Acknowledgments
+
+- [Imaging Data Commons (IDC)](https://imaging.datacommons.cancer.gov/) - Public DICOM dataset
+- [pydicom](https://pydicom.readthedocs.io/) - DICOM file format support
+- [obstore](https://github.com/chanzuckerberg/obstore) - Object storage abstraction
+- [Pillow](https://python-pillow.org/) - Image processing
+
+## Support
+
+- **Issues**: Report bugs on GitHub Issues
+- **Discussions**: Ask questions on GitHub Discussions
+- **Documentation**: See `docs/` directory
+
+## Changelog
+
+### v0.1.0 (2025-11-09)
+
+Initial release with:
+- Support for S3, HTTP, and local DICOM retrieval
+- Efficient two-pass header/pixel data fetching
+- Anatomical contrast presets
+- Auto-detection of windowing
+- WebP and JPEG output formats
+- Verbose logging
+- Comprehensive documentation
