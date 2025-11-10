@@ -145,8 +145,8 @@ def add_common_arguments(parser):
     # Contrast parameters (shared)
     parser.add_argument(
         "--contrast",
-        help="Contrast settings: preset name (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue), "
-             "shortcut (soft for soft-tissue, media for mediastinum), "
+        help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
+             "legacy alias (lung, bone, brain, etc.), shortcut (soft for ct-soft-tissue, media for ct-mediastinum), "
              "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
              "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
              "Supports both slash (medical standard) and comma separators."
@@ -870,8 +870,8 @@ def _setup_contrast_mosaic_subcommand(subparsers):
     contrast_parser.add_argument(
         "--contrast",
         action="append",
-        help="Contrast settings (repeatable, x-axis): preset name (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue), "
-             "shortcut (soft, media), 'auto', 'embedded', or custom window/level values. "
+        help="Contrast settings (repeatable, x-axis): CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
+             "legacy alias (lung, bone, brain, etc.), shortcut (soft, media), 'auto', 'embedded', or custom window/level. "
              "Formats: '1500/500' (slash, medical standard) or '1500,500' (comma). "
              "Negative values supported (e.g., '1500/-500'). At least one --contrast is required."
     )

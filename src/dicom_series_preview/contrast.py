@@ -31,47 +31,56 @@ class ContrastPresets:
         return cls._TANH_LUT
 
     PRESETS: Dict[str, Dict[str, float]] = {
-        # Lung
-        "lung": {
+        # CT Lung
+        "ct-lung": {
             "window_width": 1500,
             "window_center": -500,
         },
-        # Bone
-        "bone": {
+        # CT Bone
+        "ct-bone": {
             "window_width": 2000,
             "window_center": 300,
         },
-        # Abdomen
-        "abdomen": {
+        # CT Abdomen
+        "ct-abdomen": {
             "window_width": 350,
             "window_center": 50,
         },
-        # Brain
-        "brain": {
+        # CT Brain
+        "ct-brain": {
             "window_width": 80,
             "window_center": 40,
         },
-        # Mediastinum
-        "mediastinum": {
+        # CT Mediastinum
+        "ct-mediastinum": {
             "window_width": 350,
             "window_center": 50,
         },
-        # Liver
-        "liver": {
+        # CT Liver
+        "ct-liver": {
             "window_width": 150,
             "window_center": 30,
         },
-        # Soft tissue
-        "soft-tissue": {
+        # CT Soft tissue
+        "ct-soft-tissue": {
             "window_width": 400,
             "window_center": 50,
         },
     }
 
-    # Shortcut aliases for preset names
+    # Shortcut aliases for preset names (backward compatibility + convenience)
     SHORTCUTS: Dict[str, str] = {
-        "soft": "soft-tissue",
-        "media": "mediastinum",
+        # Old names (backward compatibility)
+        "lung": "ct-lung",
+        "bone": "ct-bone",
+        "brain": "ct-brain",
+        "abdomen": "ct-abdomen",
+        "mediastinum": "ct-mediastinum",
+        "liver": "ct-liver",
+        "soft-tissue": "ct-soft-tissue",
+        # Convenience shortcuts
+        "soft": "ct-soft-tissue",
+        "media": "ct-mediastinum",
     }
 
     @classmethod
