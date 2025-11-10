@@ -9,7 +9,6 @@ and visualization. Supports both tiled mosaics and individual image extraction.
 import argparse
 import sys
 import logging
-import json
 from pathlib import Path
 
 from .retriever import DICOMRetriever
@@ -898,7 +897,7 @@ def _setup_contrast_mosaic_subcommand(subparsers):
 
 def capture_headers_command(args, logger):
     """
-    Capture DICOM headers from all instances in a series and save to JSON.
+    Capture DICOM headers from all instances in a series and save to Parquet format.
 
     Args:
         args: Parsed command arguments
@@ -915,11 +914,10 @@ def capture_headers_command(args, logger):
 
         root_path, series_uid = result
 
-        # Validate output format
+        # Validate output file extension
         output_path = Path(args.output)
-        valid_suffixes = {".json", ".parquet"}
-        if output_path.suffix.lower() not in valid_suffixes:
-            logger.error("Output file must have .json or .parquet extension")
+        if output_path.suffix.lower() != ".parquet":
+            logger.error("Output file must have .parquet extension")
             return 1
 
         if args.verbose:
@@ -936,43 +934,15 @@ def capture_headers_command(args, logger):
         # Construct storage root with series UID
         storage_root = f"{root_path}/{series_uid}/"
 
-        # Determine output format from file extension if not explicitly set
-        output_format = args.type.lower() if hasattr(args, "type") else "json"
-        if output_format == "auto":
-            if output_path.suffix.lower() == ".parquet":
-                output_format = "parquet"
-            else:
-                output_format = "json"
-
-        # Generate output in requested format
-        if output_format == "parquet":
-            if args.verbose:
-                logger.info("Generating parquet table format...")
-            df = capture.generate_parquet_table(headers_data, storage_root)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            df.write_parquet(str(output_path))
-            if args.verbose:
-                logger.info(f"Parquet table: {len(df)} rows, {len(df.columns)} columns")
-        else:
-            # JSON format (with optional compact schema)
-            if args.compact:
-                if args.verbose:
-                    logger.info("Generating compact schema format...")
-                output_data = capture.generate_compact_schema(headers_data, storage_root)
-            else:
-                output_data = headers_data
-
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "w") as f:
-                json.dump(output_data, f, indent=2, default=str)
+        # Generate parquet table and write to file
+        if args.verbose:
+            logger.info("Generating parquet table format...")
+        df = capture.generate_parquet_table(headers_data, storage_root)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(str(output_path))
 
         if args.verbose:
-            if output_format == "parquet":
-                logger.info(f"Successfully saved parquet file")
-            elif args.compact:
-                logger.info(f"Successfully saved compact JSON schema")
-            else:
-                logger.info(f"Successfully captured headers for {headers_data['instances_processed']} instances")
+            logger.info(f"Successfully saved parquet file: {len(df)} rows, {len(df.columns)} columns")
 
         return 0
 
@@ -1002,7 +972,7 @@ def _setup_capture_headers_subcommand(subparsers):
     )
     headers_parser.add_argument(
         "output",
-        help="Output JSON file path"
+        help="Output Parquet file path"
     )
 
     # Storage arguments
@@ -1017,19 +987,6 @@ def _setup_capture_headers_subcommand(subparsers):
         "--limit",
         type=int,
         help="Limit the number of instances to process (useful for large series)"
-    )
-
-    headers_parser.add_argument(
-        "--compact",
-        action="store_true",
-        help="Output compact schema format with constant and varying headers (run-length encoded, JSON only)"
-    )
-
-    headers_parser.add_argument(
-        "--type",
-        choices=["json", "parquet", "auto"],
-        default="auto",
-        help="Output format: json (compact schema), parquet (columnar table), or auto (detect from file extension). Default: auto"
     )
 
     # Utility arguments
