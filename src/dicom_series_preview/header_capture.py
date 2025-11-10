@@ -218,6 +218,10 @@ class HeaderCapture:
         This uses a run-length encoding approach where constant headers appear once
         and varying headers are arrays. File paths are referenced via FileName field.
 
+        Instances are sorted using the same method as the main program:
+        1. Primary: z-position (ImagePositionPatient[2] or SliceLocation)
+        2. Secondary: InstanceNumber (temporal ordering at same location)
+
         Args:
             headers_data: Headers data from capture_series_headers()
             storage_root: Root path for storage (e.g., s3://bucket/series-uid/)
@@ -226,10 +230,39 @@ class HeaderCapture:
             Compact schema dictionary
         """
         instances = headers_data.get("headers", {})
-        instance_uids = sorted(instances.keys())
 
-        if not instance_uids:
+        if not instances:
             raise ValueError("No instances in headers data")
+
+        # Sort instances using same method as main program: z-position, then instance number
+        def get_sort_key(uid: str) -> tuple[float, float]:
+            """Create sort key (z_position, instance_number) for an instance."""
+            instance_data = instances[uid]
+
+            # Get z-position (spatial ordering)
+            z_position = 0.0
+            if "ImagePositionPatient" in instance_data:
+                tag_info = instance_data["ImagePositionPatient"]
+                if isinstance(tag_info, dict) and "value" in tag_info:
+                    val = tag_info["value"]
+                    if isinstance(val, list) and len(val) >= 3:
+                        z_position = float(val[2])
+            elif "SliceLocation" in instance_data:
+                tag_info = instance_data["SliceLocation"]
+                if isinstance(tag_info, dict) and "value" in tag_info:
+                    z_position = float(tag_info["value"])
+
+            # Get instance number (temporal ordering within same spatial location)
+            instance_number = 0.0
+            if "InstanceNumber" in instance_data:
+                tag_info = instance_data["InstanceNumber"]
+                if isinstance(tag_info, dict) and "value" in tag_info:
+                    instance_number = float(tag_info["value"])
+
+            return (z_position, instance_number)
+
+        # Sort instance UIDs using the sort key
+        instance_uids = sorted(instances.keys(), key=get_sort_key)
 
         # Collect all tags
         all_tags = set()
@@ -268,7 +301,7 @@ class HeaderCapture:
             else:
                 varying_items[tag_name] = values
 
-        # Add FileName to varying headers
+        # Add FileName to varying headers (using sorted order)
         filenames = [f"{uid}.dcm" for uid in instance_uids]
         varying_items["FileName"] = filenames
 
