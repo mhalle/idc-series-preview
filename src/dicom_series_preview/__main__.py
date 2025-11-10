@@ -518,6 +518,132 @@ def image_command(args, logger):
         return 1
 
 
+def contrast_mosaic_command(args, logger):
+    """Generate a mosaic of a single image under multiple contrast settings."""
+    try:
+        # Parse and normalize series specification
+        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
+        if result is None:
+            return 1
+        root_path, series_uid = result
+
+        # Validate output format
+        output_path = Path(args.output)
+        if not _validate_output_format(output_path):
+            logger.error("Output file must be .webp or .jpg/.jpeg")
+            return 1
+
+        # Validate position parameter
+        if not (0.0 <= args.position <= 1.0):
+            logger.error("--position must be between 0.0 and 1.0")
+            return 1
+
+        # Validate slice-offset parameter
+        if args.slice_offset != 0:
+            if args.verbose:
+                logger.info(f"Will apply slice offset: {args.slice_offset}")
+
+        # Validate contrast settings
+        if not args.contrast or len(args.contrast) == 0:
+            logger.error("At least one --contrast setting is required")
+            return 1
+
+        parsed_contrasts = []
+        for contrast_str in args.contrast:
+            try:
+                parsed = parse_contrast_arg(contrast_str)
+                parsed_contrasts.append(parsed)
+            except ValueError as e:
+                logger.error(f"Invalid contrast argument: {e}")
+                return 1
+
+        if args.verbose:
+            logger.info(f"Generating contrast mosaic from DICOM series")
+            logger.info(f"Series UID: {series_uid}")
+            logger.info(f"Root: {root_path}")
+            logger.info(f"Position: {args.position:.1%}")
+            logger.info(f"Contrast variations: {len(parsed_contrasts)}")
+
+        # Initialize retriever
+        retriever = DICOMRetriever(root_path)
+
+        # Retrieve single instance at position
+        if args.verbose:
+            logger.info("Retrieving DICOM instance...")
+        instance = retriever.get_instance_at_position(
+            series_uid, args.position, slice_offset=args.slice_offset
+        )
+
+        if not instance:
+            if args.slice_offset != 0:
+                logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series (check error messages above for details)")
+            else:
+                logger.error(f"No DICOM instance found at position {args.position}")
+            return 1
+
+        if args.verbose:
+            instance_uid, _ = instance
+            logger.info(f"Retrieved instance {instance_uid}")
+
+        # Determine tile layout
+        tile_width = args.tile_width if args.tile_width else len(parsed_contrasts)
+        tile_height = args.tile_height
+
+        if args.verbose:
+            logger.info(f"Tile layout: {tile_width}x{tile_height}")
+
+        # Generate contrast mosaic
+        if args.verbose:
+            logger.info("Generating contrast mosaic...")
+        generator = MosaicGenerator(
+            tile_width=tile_width,
+            tile_height=tile_height,
+            image_width=args.image_width
+        )
+
+        # Create images for each contrast setting
+        images = []
+        for i, contrast_settings in enumerate(parsed_contrasts):
+            if args.verbose:
+                logger.info(f"Processing contrast {i+1}/{len(parsed_contrasts)}: {args.contrast[i]}")
+
+            # Create generator with this contrast setting
+            gen = MosaicGenerator(
+                image_width=args.image_width,
+                window_settings=contrast_settings
+            )
+
+            img = gen.create_single_image(instance, retriever, series_uid)
+            if not img:
+                logger.error(f"Failed to generate image for contrast {args.contrast[i]}")
+                return 1
+            images.append(img)
+
+        # Tile the contrast images together
+        output_image = generator.tile_images(images)
+
+        if not output_image:
+            logger.error("Failed to tile contrast images")
+            return 1
+
+        # Save output
+        if args.verbose:
+            logger.info(f"Saving contrast mosaic to {args.output}...")
+        generator.save_image(
+            output_image,
+            args.output,
+            quality=args.quality
+        )
+
+        if args.verbose:
+            logger.info("Done!")
+        return 0
+
+    except Exception as e:
+        logger.exception(f"Error: {e}")
+        return 1
+
+
 def _setup_mosaic_subcommand(subparsers):
     """
     Setup mosaic subcommand with all its arguments.
@@ -545,15 +671,15 @@ def _setup_mosaic_subcommand(subparsers):
     mosaic_parser.set_defaults(func=mosaic_command)
 
 
-def _setup_image_subcommand(subparsers):
+def _setup_get_image_subcommand(subparsers):
     """
-    Setup image subcommand with all its arguments.
+    Setup get-image subcommand with all its arguments.
 
     Args:
         subparsers: The subparsers object from ArgumentParser
     """
     image_parser = subparsers.add_parser(
-        "image",
+        "get-image",
         help="Extract a single image from a DICOM series at a specific position"
     )
     add_common_arguments(image_parser)
@@ -572,12 +698,105 @@ def _setup_image_subcommand(subparsers):
     image_parser.set_defaults(func=image_command)
 
 
+def _setup_contrast_mosaic_subcommand(subparsers):
+    """
+    Setup contrast-mosaic subcommand with all its arguments.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    contrast_parser = subparsers.add_parser(
+        "contrast-mosaic",
+        help="Create a mosaic of a single image under multiple contrast settings"
+    )
+
+    # Add positional arguments (series UID and output)
+    contrast_parser.add_argument(
+        "seriesuid",
+        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
+             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+             "Full paths override --root parameter."
+    )
+    contrast_parser.add_argument(
+        "output",
+        help="Output image path (.webp or .jpg)"
+    )
+
+    # Storage arguments
+    contrast_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    # Image sizing
+    contrast_parser.add_argument(
+        "--image-width",
+        type=int,
+        default=128,
+        help="Width of each contrast image in pixels. Height will be proportionally scaled. Default: 128"
+    )
+
+    # Position selection
+    contrast_parser.add_argument(
+        "--position",
+        type=float,
+        required=True,
+        help="Extract image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior"
+    )
+    contrast_parser.add_argument(
+        "--slice-offset",
+        type=int,
+        default=0,
+        help="Offset from --position by number of slices (e.g., 1 for next slice, -1 for previous). Default: 0"
+    )
+
+    # Tiling options
+    contrast_parser.add_argument(
+        "--tile-width",
+        type=int,
+        help="Number of contrast images per row. Default: all in single row"
+    )
+    contrast_parser.add_argument(
+        "--tile-height",
+        type=int,
+        default=1,
+        help="Number of contrast images per column. Default: 1 (single row)"
+    )
+
+    # Contrast settings (repeatable)
+    contrast_parser.add_argument(
+        "--contrast",
+        action="append",
+        help="Contrast settings (repeatable): preset name (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue), "
+             "shortcut (soft, media), 'auto', 'embedded', or custom 'window,level' values (e.g., '1500,500'). "
+             "At least one --contrast is required."
+    )
+
+    # Output format arguments
+    contrast_parser.add_argument(
+        "-q", "--quality",
+        type=int,
+        default=25,
+        help="Output image quality 0-100. Default: 25 for WebP, 70+ recommended for JPEG"
+    )
+
+    # Utility arguments
+    contrast_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    contrast_parser.set_defaults(func=contrast_mosaic_command)
+
+
 def _setup_parser():
     """
     Setup and configure the main argument parser with all subcommands.
 
     Returns:
-        Configured ArgumentParser with mosaic and image subcommands
+        Configured ArgumentParser with mosaic, get-image, and contrast-mosaic subcommands
     """
     parser = argparse.ArgumentParser(
         description="Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization.",
@@ -589,7 +808,8 @@ def _setup_parser():
 
     # Setup subcommands
     _setup_mosaic_subcommand(subparsers)
-    _setup_image_subcommand(subparsers)
+    _setup_get_image_subcommand(subparsers)
+    _setup_contrast_mosaic_subcommand(subparsers)
 
     return parser
 

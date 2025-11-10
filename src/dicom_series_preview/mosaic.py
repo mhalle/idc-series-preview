@@ -365,6 +365,66 @@ class MosaicGenerator:
             logger.debug(f"Created {self.tile_width}x{self.tile_height} mosaic ({mosaic_width}x{mosaic_height}px)")
         return mosaic
 
+    def tile_images(self, images: List[Image.Image]) -> Optional[Image.Image]:
+        """
+        Tile a list of pre-processed PIL Images into a mosaic.
+
+        Args:
+            images: List of PIL Image objects (all should be same size or will be standardized)
+
+        Returns:
+            PIL Image of the tiled mosaic, or None if tiling failed
+        """
+        if not images:
+            logger.error("No images provided for tiling")
+            return None
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Tiling {len(images)} pre-processed images")
+
+        # Pad images list to fill grid
+        total_tiles = self.tile_width * self.tile_height
+        while len(images) < total_tiles:
+            # Create blank image with same dimensions as last image
+            blank = Image.new('L', images[-1].size, color=0)
+            images.append(blank)
+
+        # Trim to exact tile count
+        images = images[:total_tiles]
+
+        # Calculate mosaic dimensions
+        # Use the maximum width and height from all images
+        max_width = max(img.width for img in images)
+        max_height = max(img.height for img in images)
+
+        # Ensure all tiles are same size
+        standardized_images = []
+        for img in images:
+            if img.size != (max_width, max_height):
+                # Pad image to max size
+                padded = Image.new('L', (max_width, max_height), color=0)
+                offset = ((max_width - img.width) // 2, (max_height - img.height) // 2)
+                padded.paste(img, offset)
+                standardized_images.append(padded)
+            else:
+                standardized_images.append(img)
+
+        # Create mosaic
+        mosaic_width = max_width * self.tile_width
+        mosaic_height = max_height * self.tile_height
+        mosaic = Image.new('L', (mosaic_width, mosaic_height), color=0)
+
+        for idx, img in enumerate(standardized_images):
+            row = idx // self.tile_width
+            col = idx % self.tile_width
+            x = col * max_width
+            y = row * max_height
+            mosaic.paste(img, (x, y))
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Created {self.tile_width}x{self.tile_height} mosaic ({mosaic_width}x{mosaic_height}px)")
+        return mosaic
+
     def save_image(
         self,
         image: Image.Image,

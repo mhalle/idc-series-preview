@@ -37,22 +37,22 @@ pip install -e .
 
 ```bash
 # Generate a 6x6 mosaic from an IDC series (default S3 bucket)
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 
 # With custom tile grid
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --tile-width 8 --tile-height 6 --image-width 64
 
 # With lung contrast preset
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --contrast-preset lung -q 50
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --contrast lung -q 50
 
 # From local filesystem
-dicom-mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+dicom-series-preview mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
   --root /path/to/dicom/series
 
 # With verbose output
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
 ```
 
 ## Features
@@ -71,10 +71,13 @@ Built-in presets for common anatomical regions:
 - **bone**: WW=2000, WC=300
 - **brain**: WW=80, WC=40
 - **abdomen**: WW=350, WC=50
-- **mediastinum**: WW=350, WC=50
+- **mediastinum**: WW=350, WC=50 (shortcut: **media**)
 - **liver**: WW=150, WC=30
-- **soft_tissue**: WW=400, WC=50
+- **soft-tissue**: WW=400, WC=50 (shortcut: **soft**)
 - **auto**: Auto-detect from image statistics
+- **embedded**: Use window/level from DICOM file (falls back to auto if not present)
+
+Custom values also supported via window,level format: `--contrast 1500,500`
 
 ### 🚀 Performance
 
@@ -92,8 +95,10 @@ Built-in presets for common anatomical regions:
 
 ## Command-Line Options
 
+### Mosaic Subcommand
+
 ```
-Usage: dicom-mosaic [OPTIONS] SERIESUID OUTPUT
+Usage: dicom-series-preview mosaic [OPTIONS] SERIESUID OUTPUT
 
 Arguments:
   SERIESUID              DICOM Series UID (full, partial with hyphens, or prefix with wildcard)
@@ -104,12 +109,31 @@ Options:
   --tile-width WIDTH     Images per row (default: 6)
   --tile-height HEIGHT   Images per column (default: same as tile-width)
   --image-width PIXELS   Width of each tile in pixels (default: 128)
-  --contrast-preset NAME Preset contrast (lung, bone, brain, abdomen, liver, mediastinum, soft_tissue, auto)
-  --window-width WIDTH   Manual window width (Hounsfield Units)
-  --window-center CENTER Manual window center (Hounsfield Units)
+  --contrast SPEC        Contrast settings: preset (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue),
+                         shortcut (soft, media), 'auto', 'embedded', or window,level (e.g., 1500,500)
   --start FLOAT          Start of normalized z-position range 0.0-1.0 (default: 0.0)
   --end FLOAT            End of normalized z-position range 0.0-1.0 (default: 1.0)
-  --position FLOAT       Extract single image at normalized z-position 0.0-1.0 (no tiling)
+  -q, --quality LEVEL    Output quality 0-100 (default: 25)
+  -v, --verbose          Enable detailed logging
+  --help                 Show this help message
+```
+
+### Get-Image Subcommand
+
+```
+Usage: dicom-series-preview get-image [OPTIONS] SERIESUID OUTPUT
+
+Arguments:
+  SERIESUID              DICOM Series UID (full, partial with hyphens, or prefix with wildcard)
+  OUTPUT                 Output image path (.webp or .jpg)
+
+Options:
+  --root PATH            Root path for DICOM files (default: s3://idc-open-data)
+  --image-width PIXELS   Width of image in pixels (default: 128)
+  --contrast SPEC        Contrast settings: preset (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue),
+                         shortcut (soft, media), 'auto', 'embedded', or window,level (e.g., 1500,500)
+  --position FLOAT       Extract image at normalized z-position 0.0-1.0 (required)
+  --slice-offset INT     Offset from position by number of slices (default: 0)
   -q, --quality LEVEL    Output quality 0-100 (default: 25)
   -v, --verbose          Enable detailed logging
   --help                 Show this help message
@@ -119,63 +143,75 @@ Options:
 
 ### From IDC (default S3 bucket)
 ```bash
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 ```
 
 ### Custom size and quality
 ```bash
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --tile-width 10 --tile-height 8 --image-width 100 -q 40
 ```
 
-### With specific contrast settings
+### With lung preset contrast
 ```bash
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --window-width 350 --window-center 50
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --contrast lung -q 50
+```
+
+### With custom window,level values
+```bash
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --contrast 350,50
+```
+
+### Using shortcut for soft-tissue preset
+```bash
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --contrast soft
 ```
 
 ### From custom HTTP server
 ```bash
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --root http://dicom-server.example.com/series
 ```
 
 ### From local directory
 ```bash
-dicom-mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+dicom-series-preview mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
   --root /mnt/dicom-storage
 ```
 
 ### With all verbose details
 ```bash
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --contrast-preset lung -q 50 -v
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+  --contrast lung -q 50 -v
 ```
 
 ### Using range selection (middle 60% of series)
 ```bash
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.2 --end 0.8
 ```
 
 ### Using range selection (first 25% of series)
 ```bash
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.0 --end 0.25
 ```
 
 ### Extract single image at position (no tiling)
 ```bash
 # Image at the beginning
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 0.0
 
 # Image at the middle
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 0.5
 
 # Image at the end
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 1.0
 ```
 
@@ -239,9 +275,16 @@ This two-level sorting ensures that:
 ### Windowing Strategy
 
 Window/level settings are applied in this priority:
-1. **Command-line arguments**: `--contrast-preset` or `--window-width`/`--window-center`
-2. **File metadata**: WindowWidth/WindowCenter from DICOM headers
-3. **Auto-detection**: Calculated from pixel statistics (2nd to 98th percentile)
+1. **User explicitly requests "embedded"**: Uses DICOM file's window/level, falls back to auto-detection
+2. **Command-line --contrast argument**: Preset name, shortcut, custom values, "auto", or "embedded"
+3. **Default behavior** (no --contrast specified): Try file metadata, fall back to auto-detection
+
+Window/level sources:
+- **Presets**: Built-in anatomical presets (lung, bone, brain, etc.)
+- **Shortcuts**: Quick aliases (soft for soft-tissue, media for mediastinum)
+- **Custom values**: Direct window,level specification (e.g., 1500,500)
+- **Embedded**: WindowWidth/WindowCenter from DICOM file metadata
+- **Auto**: Calculated from pixel statistics (2nd to 98th percentile)
 
 ### Retrieval Optimization
 
@@ -308,16 +351,19 @@ The `--position` option extracts a single DICOM instance at a specific normalize
 **Examples:**
 ```bash
 # Superior slice at beginning
-dicom-mosaic <uid> superior.webp --position 0.0
+dicom-series-preview get-image <uid> superior.webp --position 0.0
 
 # Middle slice
-dicom-mosaic <uid> middle.webp --position 0.5
+dicom-series-preview get-image <uid> middle.webp --position 0.5
 
 # Inferior slice at end
-dicom-mosaic <uid> inferior.webp --position 1.0
+dicom-series-preview get-image <uid> inferior.webp --position 1.0
 
-# Specific level with custom contrast
-dicom-mosaic <uid> image.webp --position 0.33 --contrast-preset bone
+# Specific level with bone preset
+dicom-series-preview get-image <uid> image.webp --position 0.33 --contrast bone
+
+# With custom window,level
+dicom-series-preview get-image <uid> image.webp --position 0.5 --contrast 1500,500
 ```
 
 ## Supported DICOM Codecs
@@ -421,8 +467,9 @@ Manages window/level settings:
 
 ### Output image is too bright/dark
 - Check if image uses non-standard WindowWidth/WindowCenter
-- Try `--contrast-preset auto` to auto-detect
-- Adjust manually with `--window-width` and `--window-center`
+- Try `--contrast auto` to auto-detect from pixel statistics
+- Try `--contrast embedded` to use DICOM file's stored window/level
+- Adjust manually with `--contrast 1500,500` (custom window,level values)
 
 ### Slow performance
 - Reduce `--image-width` for faster processing
