@@ -14,6 +14,7 @@ from pathlib import Path
 from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
+from .header_capture import HeaderCapture
 
 
 def parse_series_specification(
@@ -894,6 +895,103 @@ def _setup_contrast_mosaic_subcommand(subparsers):
     contrast_parser.set_defaults(func=contrast_mosaic_command)
 
 
+def capture_headers_command(args, logger):
+    """
+    Capture DICOM headers from all instances in a series and save to JSON.
+
+    Args:
+        args: Parsed command arguments
+        logger: Logger instance
+
+    Returns:
+        0 on success, 1 on error
+    """
+    try:
+        # Parse and normalize series specification
+        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
+        if result is None:
+            return 1
+
+        root_path, series_uid = result
+
+        # Validate output format
+        output_path = Path(args.output)
+        if output_path.suffix != ".json":
+            logger.error("Output file must have .json extension")
+            return 1
+
+        if args.verbose:
+            logger.info(f"Capturing headers from series {series_uid}...")
+            logger.info(f"Root path: {root_path}")
+
+        # Capture headers
+        capture = HeaderCapture(root_path)
+        headers_data = capture.capture_series_headers(
+            series_uid,
+            limit=args.limit if hasattr(args, 'limit') and args.limit else None
+        )
+
+        # Save to JSON
+        capture.save_headers_json(headers_data, output_path)
+
+        if args.verbose:
+            logger.info(f"Successfully captured headers for {headers_data['instances_processed']} instances")
+
+        return 0
+
+    except Exception as e:
+        logger.exception(f"Error capturing headers: {e}")
+        return 1
+
+
+def _setup_capture_headers_subcommand(subparsers):
+    """
+    Setup capture-headers subcommand with all its arguments.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    headers_parser = subparsers.add_parser(
+        "capture-headers",
+        help="Capture DICOM headers from a series for analysis (experimental)"
+    )
+
+    # Required positional arguments
+    headers_parser.add_argument(
+        "seriesuid",
+        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
+             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+             "Full paths override --root parameter."
+    )
+    headers_parser.add_argument(
+        "output",
+        help="Output JSON file path"
+    )
+
+    # Storage arguments
+    headers_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    # Optional arguments
+    headers_parser.add_argument(
+        "--limit",
+        type=int,
+        help="Limit the number of instances to process (useful for large series)"
+    )
+
+    # Utility arguments
+    headers_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    headers_parser.set_defaults(func=capture_headers_command)
+
+
 def _setup_parser():
     """
     Setup and configure the main argument parser with all subcommands.
@@ -913,6 +1011,7 @@ def _setup_parser():
     _setup_mosaic_subcommand(subparsers)
     _setup_get_image_subcommand(subparsers)
     _setup_contrast_mosaic_subcommand(subparsers)
+    _setup_capture_headers_subcommand(subparsers)
 
     return parser
 

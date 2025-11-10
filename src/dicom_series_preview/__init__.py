@@ -4,6 +4,7 @@ from .__main__ import main, normalize_series_uid, parse_series_specification, se
 from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
+from .header_capture import HeaderCapture
 
 __version__ = "0.1.0"
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "DICOMRetriever",
     "MosaicGenerator",
     "ContrastPresets",
+    "HeaderCapture",
 ]
