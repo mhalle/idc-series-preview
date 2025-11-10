@@ -265,7 +265,7 @@ def _initialize_retriever_with_cache(
     return DICOMRetriever(root_path, index_df=index_df)
 
 
-def _parse_and_normalize_series(series_spec, root, verbose, logger):
+def _parse_and_normalize_series(series_spec, root, logger):
     """
     Parse, normalize, and resolve series specification.
 
@@ -274,7 +274,6 @@ def _parse_and_normalize_series(series_spec, root, verbose, logger):
     Args:
         series_spec: Series specification (UID, prefix, or full path)
         root: Default root path
-        verbose: Whether to log verbose output
         logger: Logger instance
 
     Returns:
@@ -286,8 +285,8 @@ def _parse_and_normalize_series(series_spec, root, verbose, logger):
         root_path, parsed_spec = parse_series_specification(series_spec, root)
 
         # If a full path was provided and --root was also specified, note the override
-        if root_path != root and verbose:
-            logger.info(f"Full path specified, overriding --root with: {root_path}")
+        if root_path != root:
+            logger.debug(f"Full path specified, overriding --root with: {root_path}")
     except ValueError as e:
         logger.error(f"Invalid series specification: {e}")
         return None
@@ -301,8 +300,7 @@ def _parse_and_normalize_series(series_spec, root, verbose, logger):
 
     # Handle prefix search (ends with *)
     if series_uid.endswith('*'):
-        if verbose:
-            logger.info(f"Searching for series matching prefix: {parsed_spec}...")
+        logger.info(f"Searching for series matching prefix: {parsed_spec}...")
 
         retriever_temp = DICOMRetriever(root_path)
         prefix = series_uid.rstrip('*')
@@ -321,8 +319,7 @@ def _parse_and_normalize_series(series_spec, root, verbose, logger):
             return None
         else:
             series_uid = matches[0]
-            if verbose:
-                logger.info(f"Found matching series: {series_uid}")
+            logger.info(f"Found matching series: {series_uid}")
 
     return root_path, series_uid
 
@@ -441,7 +438,7 @@ def mosaic_command(args, logger):
     """Generate a tiled mosaic from a DICOM series."""
     try:
         # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
+        result = _parse_and_normalize_series(args.seriesuid, args.root, logger)
         if result is None:
             return 1
         root_path, series_uid = result
@@ -536,7 +533,7 @@ def image_command(args, logger):
     """Extract a single image from a DICOM series at a specific position."""
     try:
         # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
+        result = _parse_and_normalize_series(args.seriesuid, args.root, logger)
         if result is None:
             return 1
         root_path, series_uid = result
@@ -626,7 +623,7 @@ def contrast_mosaic_command(args, logger):
     """
     try:
         # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
+        result = _parse_and_normalize_series(args.seriesuid, args.root, logger)
         if result is None:
             return 1
         root_path, series_uid = result
@@ -819,7 +816,7 @@ def get_index_command(args, logger):
     """Get or create a DICOM series index and return its path."""
     try:
         # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.series, args.root, args.verbose, logger)
+        result = _parse_and_normalize_series(args.series, args.root, logger)
         if result is None:
             return 1
         root_path, series_uid = result
@@ -1077,7 +1074,7 @@ def build_index_command(args, logger):
         for series_spec in series_list:
             try:
                 # Parse and normalize series specification
-                result = _parse_and_normalize_series(series_spec, args.root, args.verbose, logger)
+                result = _parse_and_normalize_series(series_spec, args.root, logger)
                 if result is None:
                     logger.error(f"Failed to parse series: {series_spec}")
                     continue

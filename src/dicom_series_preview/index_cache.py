@@ -114,7 +114,6 @@ class IndexCache:
         series_uid: str,
         root_path: str,
         index_dir: Optional[str] = None,
-        verbose: bool = False,
         logger_instance: Optional[logging.Logger] = None,
     ) -> Optional[pl.DataFrame]:
         """
@@ -124,7 +123,6 @@ class IndexCache:
             series_uid: Normalized series UID
             root_path: Root storage path
             index_dir: Optional cache directory (None to use defaults)
-            verbose: Enable verbose logging
             logger_instance: Logger instance (uses module logger if None)
 
         Returns:
@@ -138,21 +136,18 @@ class IndexCache:
 
         # Try to load existing index
         if index_path.exists():
-            if verbose:
-                log.info(f"Loading cached index from: {index_path}")
+            log.debug(f"Loading cached index from: {index_path}")
             try:
                 df = IndexCache.load_index(index_path)
                 IndexCache.validate_index(df, series_uid)
-                if verbose:
-                    log.info(f"Index loaded: {len(df)} instances")
+                log.info(f"Index loaded: {len(df)} instances")
                 return df
             except (FileNotFoundError, ValueError) as e:
                 log.error(f"Failed to load index: {e}")
                 return None
 
         # Index doesn't exist, generate it
-        if verbose:
-            log.info(f"Generating index for series {series_uid}...")
+        log.info(f"Generating index for series {series_uid}...")
 
         try:
             from .header_capture import HeaderCapture
@@ -161,19 +156,17 @@ class IndexCache:
             headers_data = capture.capture_series_headers(series_uid)
             storage_root = f"{root_path}/{series_uid}/"
 
-            if verbose:
-                log.info("Generating index parquet table...")
+            log.debug("Generating index parquet table...")
             df = capture.generate_parquet_table(headers_data, storage_root)
 
             # Save the generated index (create indices subdirectory)
             index_path.parent.mkdir(parents=True, exist_ok=True)
             df.write_parquet(str(index_path))
 
-            if verbose:
-                log.info(
-                    f"Index generated and saved to {index_path}: "
-                    f"{len(df)} rows, {len(df.columns)} columns"
-                )
+            log.info(
+                f"Index generated and saved to {index_path}: "
+                f"{len(df)} rows, {len(df.columns)} columns"
+            )
 
             return df
 

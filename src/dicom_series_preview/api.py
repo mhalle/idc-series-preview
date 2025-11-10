@@ -5,7 +5,7 @@ from typing import Optional
 
 import polars as pl
 
-from .__main__ import _parse_and_normalize_series, setup_logging
+from .__main__ import _parse_and_normalize_series
 from .index_cache import IndexCache
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,6 @@ class SeriesIndex:
         series: str,
         root: str = "s3://idc-open-data",
         cache_dir: Optional[str] = None,
-        verbose: bool = False,
     ):
         """
         Initialize a series index.
@@ -52,33 +51,27 @@ class SeriesIndex:
         cache_dir : str or None, default None
             Cache directory for indices. If None, uses platform default.
 
-        verbose : bool, default False
-            Enable logging output.
-
         Raises
         ------
         ValueError
             If series cannot be resolved or index generation fails.
         """
-        setup_logging(verbose)
-        self._verbose = verbose
         self._logger = logging.getLogger(__name__)
+        self._logger.debug(f"Initializing SeriesIndex for {series}")
 
         # Parse and normalize series specification
-        result = _parse_and_normalize_series(
-            series, root, verbose, self._logger
-        )
+        result = _parse_and_normalize_series(series, root, self._logger)
         if result is None:
             raise ValueError(f"Could not resolve series: {series}")
 
         self._root_path, self._series_uid = result
+        self._logger.debug(f"Resolved to UID: {self._series_uid}, Root: {self._root_path}")
 
         # Load or generate index
         index_df = IndexCache.load_or_generate_index(
             series_uid=self._series_uid,
             root_path=self._root_path,
             index_dir=cache_dir,
-            verbose=verbose,
             logger_instance=self._logger,
         )
 
