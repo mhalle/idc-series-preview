@@ -329,6 +329,117 @@ The tool will exit with error code 1 if:
 
 On error, detailed messages are logged to help diagnose the issue. Use `-v/--verbose` for debug information.
 
+## CAPTURE-HEADERS COMMAND
+
+The `capture-headers` subcommand extracts DICOM headers from all instances in a series and exports them to Parquet format for analysis.
+
+### SYNOPSIS
+
+```
+dicom-series-preview capture-headers [OPTIONS] SERIESUID OUTPUT
+```
+
+### ARGUMENTS
+
+#### SERIESUID
+The DICOM Series UID. Same format options as the main command:
+- Full 32-character hex UID: `38902e14b11f4548910e771ee757dc82`
+- Standard UUID format: `38902e14-b11f-4548-910e-771ee757dc82`
+- Partial prefix with wildcard: `38902e14*`
+
+#### OUTPUT
+Output Parquet file path. Must have a `.parquet` extension.
+
+### OPTIONS
+
+`--root PATH`
+: Root path for DICOM files (S3, HTTP, or local filesystem).
+: Default: `s3://idc-open-data`
+
+`--limit INT`
+: Limit the number of instances to process (useful for large series).
+
+`-v, --verbose`
+: Enable verbose logging output.
+
+### OUTPUT FORMAT
+
+The Parquet file contains one row per DICOM instance with the following columns:
+
+#### Metadata Columns
+- **Index** (UInt32): Zero-based sort index (0 to n-1) showing instance order
+- **FileName** (Utf8): Instance filename (derived from SOPInstanceUID)
+- **SeriesUID** (Utf8): Series UID (constant for all rows)
+- **StorageRoot** (Utf8): Storage root path (constant for all rows)
+
+#### Sorting Information
+- **PrimaryPosition** (Float32): The actual coordinate value on the primary axis
+  - For spatial scans (axial/sagittal/coronal): the X, Y, or Z position in mm
+  - For InstanceNumber-only scans: the InstanceNumber value
+  - Examples: -792.5, -791.5, -488.5 for an axial CT series
+- **PrimaryAxis** (Utf8): Single-character label indicating which axis/method was used for sorting
+  - `'X'` - Sagittal orientation (X-axis varies most)
+  - `'Y'` - Coronal orientation (Y-axis varies most)
+  - `'Z'` - Axial orientation (Z-axis varies most)
+  - `'I'` - Instance number (no spatial position available)
+
+#### Instance Information
+- **InstanceNumber** (Int32): DICOM InstanceNumber tag
+- **SOPInstanceUID** (Utf8): DICOM SOPInstanceUID (unique per instance)
+- **SliceLocation** (Float32): DICOM SliceLocation tag (if available)
+
+#### Other Varying Headers
+All other DICOM header elements that vary across the series are included as typed columns:
+- Numeric tags (IS, DS, US, etc.) → Int32/Float32
+- Text tags (CS, LO, PN, etc.) → Utf8
+- Binary data (OB, OW) → Two columns: `TagName_Size` (Int32) and `TagName_Hash` (Utf8)
+
+#### Constant Headers
+DICOM elements with the same value across all instances are excluded to reduce file size (they can be determined from the metadata).
+
+### EXAMPLES
+
+#### Basic header capture
+```
+capture-headers 38902e14-b11f-4548-910e-771ee757dc82 headers.parquet
+```
+
+#### Capture with verbose output
+```
+capture-headers 38902e14-b11f-4548-910e-771ee757dc82 headers.parquet -v
+```
+
+#### Limit to first 50 instances (for large series)
+```
+capture-headers 38902e14-b11f-4548-910e-771ee757dc82 headers.parquet --limit 50
+```
+
+#### From local filesystem
+```
+capture-headers d94176e6-bc8e-4666-b143-639754258d06 headers.parquet \
+  --root /local/dicom/path
+```
+
+### NOTES
+
+#### Sorting
+Instances are automatically sorted by the centralized slice sorting logic:
+1. **Detect dominant axis**: Finds which spatial axis (X, Y, Z) has the largest range
+2. **Apply radiological order**: Standard medical viewing convention (superior→inferior, right→left, anterior→posterior)
+3. **Secondary sort**: Instances at the same spatial location are ordered by InstanceNumber
+
+#### File Format Benefits
+- **Strongly-typed columns**: Each column has an appropriate Parars data type, enabling efficient compression and analysis
+- **Compact representation**: Run-length encoding for constant values, columnar compression
+- **Self-documenting**: PrimaryAxis column explicitly indicates which axis/method was used for sorting
+- **Analyzable**: Parquet format is supported by Pandas, Polars, DuckDB, and other data analysis tools
+
+#### Index Column
+The **Index** column (0 to n-1) tracks the sorted position of each instance. This is useful for:
+- Understanding the sort order of the series
+- Creating queries like "give me instances 100-150" → rows with Index in that range
+- Correlating back to spatial position via PrimaryPosition column
+
 ## COMPRESSION CODEC SUPPORT
 
 Currently supported DICOM compression codecs:
