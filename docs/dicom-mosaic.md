@@ -329,14 +329,14 @@ The tool will exit with error code 1 if:
 
 On error, detailed messages are logged to help diagnose the issue. Use `-v/--verbose` for debug information.
 
-## CAPTURE-HEADERS COMMAND
+## BUILD-INDEX COMMAND
 
-The `capture-headers` subcommand extracts DICOM headers from all instances in a series and exports them to Parquet format for analysis.
+The `build-index` subcommand extracts DICOM headers from all instances in a series and exports them to Parquet format as a cached index for fast access.
 
 ### SYNOPSIS
 
 ```
-dicom-series-preview capture-headers [OPTIONS] SERIESUID OUTPUT
+dicom-series-preview build-index [OPTIONS] SERIESUID OUTPUT
 ```
 
 ### ARGUMENTS
@@ -399,24 +399,24 @@ DICOM elements with the same value across all instances are excluded to reduce f
 
 ### EXAMPLES
 
-#### Basic header capture
+#### Basic index build
 ```
-capture-headers 38902e14-b11f-4548-910e-771ee757dc82 headers.parquet
+build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet
 ```
 
-#### Capture with verbose output
+#### Build index with verbose output
 ```
-capture-headers 38902e14-b11f-4548-910e-771ee757dc82 headers.parquet -v
+build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet -v
 ```
 
 #### Limit to first 50 instances (for large series)
 ```
-capture-headers 38902e14-b11f-4548-910e-771ee757dc82 headers.parquet --limit 50
+build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet --limit 50
 ```
 
 #### From local filesystem
 ```
-capture-headers d94176e6-bc8e-4666-b143-639754258d06 headers.parquet \
+build-index d94176e6-bc8e-4666-b143-639754258d06 series.index.parquet \
   --root /local/dicom/path
 ```
 

@@ -895,9 +895,9 @@ def _setup_contrast_mosaic_subcommand(subparsers):
     contrast_parser.set_defaults(func=contrast_mosaic_command)
 
 
-def capture_headers_command(args, logger):
+def build_index_command(args, logger):
     """
-    Capture DICOM headers from all instances in a series and save to Parquet format.
+    Build a DICOM series index by capturing headers and saving to Parquet format.
 
     Args:
         args: Parsed command arguments
@@ -921,7 +921,7 @@ def capture_headers_command(args, logger):
             return 1
 
         if args.verbose:
-            logger.info(f"Capturing headers from series {series_uid}...")
+            logger.info(f"Building index for series {series_uid}...")
             logger.info(f"Root path: {root_path}")
 
         # Capture headers
@@ -936,13 +936,13 @@ def capture_headers_command(args, logger):
 
         # Generate parquet table and write to file
         if args.verbose:
-            logger.info("Generating parquet table format...")
+            logger.info("Generating index parquet table...")
         df = capture.generate_parquet_table(headers_data, storage_root)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         df.write_parquet(str(output_path))
 
         if args.verbose:
-            logger.info(f"Successfully saved parquet file: {len(df)} rows, {len(df.columns)} columns")
+            logger.info(f"Successfully built index: {len(df)} rows, {len(df.columns)} columns")
 
         return 0
 
@@ -951,52 +951,52 @@ def capture_headers_command(args, logger):
         return 1
 
 
-def _setup_capture_headers_subcommand(subparsers):
+def _setup_build_index_subcommand(subparsers):
     """
-    Setup capture-headers subcommand with all its arguments.
+    Setup build-index subcommand with all its arguments.
 
     Args:
         subparsers: The subparsers object from ArgumentParser
     """
-    headers_parser = subparsers.add_parser(
-        "capture-headers",
-        help="Capture DICOM headers from a series for analysis (experimental)"
+    index_parser = subparsers.add_parser(
+        "build-index",
+        help="Build a series index (cached headers for fast access)"
     )
 
     # Required positional arguments
-    headers_parser.add_argument(
+    index_parser.add_argument(
         "seriesuid",
         help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
              "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
              "Full paths override --root parameter."
     )
-    headers_parser.add_argument(
+    index_parser.add_argument(
         "output",
-        help="Output Parquet file path"
+        help="Output Parquet index file path"
     )
 
     # Storage arguments
-    headers_parser.add_argument(
+    index_parser.add_argument(
         "--root",
         default="s3://idc-open-data",
         help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
     )
 
     # Optional arguments
-    headers_parser.add_argument(
+    index_parser.add_argument(
         "--limit",
         type=int,
         help="Limit the number of instances to process (useful for large series)"
     )
 
     # Utility arguments
-    headers_parser.add_argument(
+    index_parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable detailed logging"
     )
 
-    headers_parser.set_defaults(func=capture_headers_command)
+    index_parser.set_defaults(func=build_index_command)
 
 
 def _setup_parser():
@@ -1018,7 +1018,7 @@ def _setup_parser():
     _setup_mosaic_subcommand(subparsers)
     _setup_get_image_subcommand(subparsers)
     _setup_contrast_mosaic_subcommand(subparsers)
-    _setup_capture_headers_subcommand(subparsers)
+    _setup_build_index_subcommand(subparsers)
 
     return parser
 
