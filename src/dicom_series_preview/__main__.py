@@ -148,7 +148,8 @@ def add_common_arguments(parser):
         help="Contrast settings: preset name (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue), "
              "shortcut (soft for soft-tissue, media for mediastinum), "
              "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
-             "or custom 'window,level' values (e.g., '1500,500')"
+             "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
+             "Supports both slash (medical standard) and comma separators."
     )
 
     # Output format arguments
@@ -247,10 +248,10 @@ def _parse_and_normalize_series(series_spec, root, verbose, logger):
 
 def parse_contrast_arg(contrast_str: str) -> dict | str | None:
     """
-    Parse contrast argument which can be a preset name, "auto", "embedded", or window,level values.
+    Parse contrast argument which can be a preset name, "auto", "embedded", or window/level values.
 
     Args:
-        contrast_str: Contrast specification (e.g., "lung", "soft", "auto", "embedded", "1500,500")
+        contrast_str: Contrast specification (e.g., "lung", "soft", "auto", "embedded", "1500/500", "1500,-500")
 
     Returns:
         - Dict with 'window_width' and 'window_center' for custom values or presets
@@ -258,17 +259,35 @@ def parse_contrast_arg(contrast_str: str) -> dict | str | None:
         - "embedded" string for using DICOM file's window/level
         - Raises ValueError if format is invalid
     """
-    contrast_str = contrast_str.strip().lower()
+    contrast_str = contrast_str.strip()
+    contrast_str_lower = contrast_str.lower()
 
     # Check if it's a special keyword
-    if contrast_str in ["auto", "embedded"]:
-        return contrast_str
+    if contrast_str_lower in ["auto", "embedded"]:
+        return contrast_str_lower
 
-    # Check if it's a preset or shortcut
-    if contrast_str in ContrastPresets.PRESETS.keys() or contrast_str in ContrastPresets.SHORTCUTS.keys():
+    # Check if it's a preset or shortcut (case-insensitive)
+    if contrast_str_lower in ContrastPresets.PRESETS.keys() or contrast_str_lower in ContrastPresets.SHORTCUTS.keys():
         return ContrastPresets.get_preset(contrast_str)
 
-    # Check if it's window,level format
+    # Check if it's window/level format (slash-separated, medical imaging standard)
+    if "/" in contrast_str:
+        try:
+            parts = contrast_str.split("/")
+            if len(parts) != 2:
+                raise ValueError(
+                    f"Window/level format requires exactly 2 values, got {len(parts)}"
+                )
+            window_width = float(parts[0].strip())
+            window_level = float(parts[1].strip())
+            return {
+                "window_width": window_width,
+                "window_center": window_level,
+            }
+        except ValueError as e:
+            raise ValueError(f"Invalid window/level format: {e}")
+
+    # Check if it's window,level format (comma-separated, alternative)
     if "," in contrast_str:
         try:
             parts = contrast_str.split(",")
@@ -294,7 +313,8 @@ def parse_contrast_arg(contrast_str: str) -> dict | str | None:
     # Not a valid format
     raise ValueError(
         f"Invalid contrast specification: '{contrast_str}'. "
-        f"Must be a preset ({preset_list}), shortcut ({shortcuts_list}), 'auto', 'embedded', or window,level (e.g., '1500,500')"
+        f"Must be a preset ({preset_list}), shortcut ({shortcuts_list}), 'auto', 'embedded', "
+        f"or window/level format (e.g., '1500/500' or '1500,-500' for negative values)"
     )
 
 
@@ -519,7 +539,10 @@ def image_command(args, logger):
 
 
 def contrast_mosaic_command(args, logger):
-    """Generate a mosaic of a single image under multiple contrast settings."""
+    """Generate a grid comparing a DICOM instance(s) under multiple contrast settings.
+
+    Grid layout: contrasts on x-axis (columns), instances on y-axis (rows).
+    """
     try:
         # Parse and normalize series specification
         result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
@@ -533,15 +556,17 @@ def contrast_mosaic_command(args, logger):
             logger.error("Output file must be .webp or .jpg/.jpeg")
             return 1
 
-        # Validate position parameter
-        if not (0.0 <= args.position <= 1.0):
-            logger.error("--position must be between 0.0 and 1.0")
+        # Validate mutually exclusive position vs range selection
+        has_position = args.position is not None
+        has_range = args.start is not None or args.end is not None
+
+        if has_position and has_range:
+            logger.error("Cannot use both --position and --start/--end together")
             return 1
 
-        # Validate slice-offset parameter
-        if args.slice_offset != 0:
-            if args.verbose:
-                logger.info(f"Will apply slice offset: {args.slice_offset}")
+        if not has_position and not has_range:
+            logger.error("Must specify either --position or --start/--end")
+            return 1
 
         # Validate contrast settings
         if not args.contrast or len(args.contrast) == 0:
@@ -557,78 +582,143 @@ def contrast_mosaic_command(args, logger):
                 logger.error(f"Invalid contrast argument: {e}")
                 return 1
 
-        if args.verbose:
-            logger.info(f"Generating contrast mosaic from DICOM series")
-            logger.info(f"Series UID: {series_uid}")
-            logger.info(f"Root: {root_path}")
-            logger.info(f"Position: {args.position:.1%}")
-            logger.info(f"Contrast variations: {len(parsed_contrasts)}")
-
-        # Initialize retriever
-        retriever = DICOMRetriever(root_path)
-
-        # Retrieve single instance at position
-        if args.verbose:
-            logger.info("Retrieving DICOM instance...")
-        instance = retriever.get_instance_at_position(
-            series_uid, args.position, slice_offset=args.slice_offset
-        )
-
-        if not instance:
-            if args.slice_offset != 0:
-                logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series (check error messages above for details)")
-            else:
-                logger.error(f"No DICOM instance found at position {args.position}")
-            return 1
-
-        if args.verbose:
-            instance_uid, _ = instance
-            logger.info(f"Retrieved instance {instance_uid}")
-
-        # Determine tile layout
-        tile_width = args.tile_width if args.tile_width else len(parsed_contrasts)
+        # Determine instance selection mode
+        instances_list = []
         tile_height = args.tile_height
 
-        if args.verbose:
-            logger.info(f"Tile layout: {tile_width}x{tile_height}")
+        if has_position:
+            # Single position mode
+            if not (0.0 <= args.position <= 1.0):
+                logger.error("--position must be between 0.0 and 1.0")
+                return 1
 
-        # Generate contrast mosaic
-        if args.verbose:
-            logger.info("Generating contrast mosaic...")
+            if args.slice_offset != 0:
+                if args.verbose:
+                    logger.info(f"Will apply slice offset: {args.slice_offset}")
+
+            tile_height = 1
+
+            if args.verbose:
+                logger.info(f"Generating contrast grid from DICOM series")
+                logger.info(f"Series UID: {series_uid}")
+                logger.info(f"Root: {root_path}")
+                logger.info(f"Position: {args.position:.1%}")
+                logger.info(f"Contrast variations: {len(parsed_contrasts)}")
+
+            # Initialize retriever
+            retriever = DICOMRetriever(root_path)
+
+            # Retrieve single instance at position
+            if args.verbose:
+                logger.info("Retrieving DICOM instance...")
+            instance = retriever.get_instance_at_position(
+                series_uid, args.position, slice_offset=args.slice_offset
+            )
+
+            if not instance:
+                if args.slice_offset != 0:
+                    logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series")
+                else:
+                    logger.error(f"No DICOM instance found at position {args.position}")
+                return 1
+
+            if args.verbose:
+                instance_uid, _ = instance
+                logger.info(f"Retrieved instance {instance_uid}")
+
+            instances_list = [instance]
+
+        else:
+            # Range selection mode
+            if args.slice_offset != 0:
+                logger.error("--slice-offset is not allowed with --start/--end")
+                return 1
+
+            # Validate range parameters
+            if not (0.0 <= args.start <= 1.0):
+                logger.error("--start must be between 0.0 and 1.0")
+                return 1
+            if not (0.0 <= args.end <= 1.0):
+                logger.error("--end must be between 0.0 and 1.0")
+                return 1
+            if args.start > args.end:
+                logger.error("--start must be less than or equal to --end")
+                return 1
+
+            if args.verbose:
+                logger.info(f"Generating contrast grid from DICOM series")
+                logger.info(f"Series UID: {series_uid}")
+                logger.info(f"Root: {root_path}")
+                logger.info(f"Range: {args.start:.1%} to {args.end:.1%}")
+                logger.info(f"Tile height (instances): {tile_height}")
+                logger.info(f"Contrast variations: {len(parsed_contrasts)}")
+
+            # Initialize retriever
+            retriever = DICOMRetriever(root_path)
+
+            # Retrieve distributed instances across range
+            if args.verbose:
+                logger.info("Retrieving DICOM instances...")
+            instances_list = retriever.get_instances_distributed(
+                series_uid,
+                tile_height,
+                start=args.start,
+                end=args.end
+            )
+
+            if not instances_list:
+                logger.error(f"No DICOM instances found in range {args.start:.1%}-{args.end:.1%}")
+                return 1
+
+            if args.verbose:
+                logger.info(f"Retrieved {len(instances_list)} instances")
+
+        # Grid layout: contrasts on x-axis, instances on y-axis
+        num_contrasts = len(parsed_contrasts)
         generator = MosaicGenerator(
-            tile_width=tile_width,
+            tile_width=num_contrasts,
             tile_height=tile_height,
             image_width=args.image_width
         )
 
-        # Create images for each contrast setting
-        images = []
-        for i, contrast_settings in enumerate(parsed_contrasts):
-            if args.verbose:
-                logger.info(f"Processing contrast {i+1}/{len(parsed_contrasts)}: {args.contrast[i]}")
+        if args.verbose:
+            logger.info(f"Grid layout: {num_contrasts}x{tile_height} (contrasts x instances)")
+            logger.info("Generating contrast grid...")
 
-            # Create generator with this contrast setting
-            gen = MosaicGenerator(
-                image_width=args.image_width,
-                window_settings=contrast_settings
-            )
+        # Create images: for each instance, apply all contrasts
+        # Store in row-major order: all contrasts for instance 0, then all for instance 1, etc.
+        all_images = []
+        for inst_idx, instance in enumerate(instances_list):
+            for contrast_idx, contrast_settings in enumerate(parsed_contrasts):
+                contrast_str = args.contrast[contrast_idx]
+                if args.verbose:
+                    logger.info(
+                        f"Instance {inst_idx+1}/{len(instances_list)}, "
+                        f"contrast {contrast_idx+1}/{num_contrasts}: {contrast_str}"
+                    )
 
-            img = gen.create_single_image(instance, retriever, series_uid)
-            if not img:
-                logger.error(f"Failed to generate image for contrast {args.contrast[i]}")
-                return 1
-            images.append(img)
+                # Create generator with this contrast setting
+                gen = MosaicGenerator(
+                    image_width=args.image_width,
+                    window_settings=contrast_settings
+                )
 
-        # Tile the contrast images together
-        output_image = generator.tile_images(images)
+                img = gen.create_single_image(instance, retriever, series_uid)
+                if not img:
+                    logger.error(f"Failed to generate image for instance {inst_idx+1}, contrast {contrast_str}")
+                    return 1
+                all_images.append(img)
+
+        # Tile the images into grid
+        output_image = generator.tile_images(all_images)
 
         if not output_image:
-            logger.error("Failed to tile contrast images")
+            logger.error("Failed to tile images into grid")
             return 1
 
         # Save output
         if args.verbose:
-            logger.info(f"Saving contrast mosaic to {args.output}...")
+            logger.info(f"Saving contrast grid to {args.output}...")
         generator.save_image(
             output_image,
             args.output,
@@ -702,12 +792,15 @@ def _setup_contrast_mosaic_subcommand(subparsers):
     """
     Setup contrast-mosaic subcommand with all its arguments.
 
+    Grid layout: contrasts on x-axis (columns), instances on y-axis (rows).
+    Use either --position for single instance or --start/--end for range of instances.
+
     Args:
         subparsers: The subparsers object from ArgumentParser
     """
     contrast_parser = subparsers.add_parser(
         "contrast-mosaic",
-        help="Create a mosaic of a single image under multiple contrast settings"
+        help="Create a grid of a DICOM instance(s) under multiple contrast settings (contrasts on x-axis, instances on y-axis)"
     )
 
     # Add positional arguments (series UID and output)
@@ -734,43 +827,53 @@ def _setup_contrast_mosaic_subcommand(subparsers):
         "--image-width",
         type=int,
         default=128,
-        help="Width of each contrast image in pixels. Height will be proportionally scaled. Default: 128"
+        help="Width of each image in pixels. Height will be proportionally scaled. Default: 128"
     )
 
-    # Position selection
+    # Instance selection: position mode (single instance)
     contrast_parser.add_argument(
         "--position",
         type=float,
-        required=True,
-        help="Extract image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior"
+        help="Extract single image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior. "
+             "Cannot be used with --start/--end."
     )
     contrast_parser.add_argument(
         "--slice-offset",
         type=int,
         default=0,
-        help="Offset from --position by number of slices (e.g., 1 for next slice, -1 for previous). Default: 0"
+        help="Offset from --position by number of slices (only valid with --position). Default: 0"
     )
 
-    # Tiling options
+    # Instance selection: range mode (multiple instances)
     contrast_parser.add_argument(
-        "--tile-width",
-        type=int,
-        help="Number of contrast images per row. Default: all in single row"
+        "--start",
+        type=float,
+        help="Start of normalized z-position range (0.0-1.0) for selecting multiple instances. "
+             "Cannot be used with --position."
     )
+    contrast_parser.add_argument(
+        "--end",
+        type=float,
+        help="End of normalized z-position range (0.0-1.0) for selecting multiple instances. "
+             "Cannot be used with --position."
+    )
+
+    # Vertical tiling (instances)
     contrast_parser.add_argument(
         "--tile-height",
         type=int,
-        default=1,
-        help="Number of contrast images per column. Default: 1 (single row)"
+        default=2,
+        help="Number of instances per column (y-axis). Only used with --start/--end. Default: 2"
     )
 
-    # Contrast settings (repeatable)
+    # Contrast settings (repeatable, always horizontal)
     contrast_parser.add_argument(
         "--contrast",
         action="append",
-        help="Contrast settings (repeatable): preset name (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue), "
-             "shortcut (soft, media), 'auto', 'embedded', or custom 'window,level' values (e.g., '1500,500'). "
-             "At least one --contrast is required."
+        help="Contrast settings (repeatable, x-axis): preset name (lung, bone, brain, abdomen, liver, mediastinum, soft-tissue), "
+             "shortcut (soft, media), 'auto', 'embedded', or custom window/level values. "
+             "Formats: '1500/500' (slash, medical standard) or '1500,500' (comma). "
+             "Negative values supported (e.g., '1500/-500'). At least one --contrast is required."
     )
 
     # Output format arguments
