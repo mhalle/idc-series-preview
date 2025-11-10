@@ -10,11 +10,15 @@ import argparse
 import sys
 import logging
 from pathlib import Path
+from typing import Optional
+
+import polars as pl
 
 from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
 from .header_capture import HeaderCapture
+from .index_cache import IndexCache
 
 
 def parse_series_specification(
@@ -182,6 +186,53 @@ def add_range_arguments(parser):
         type=float,
         default=1.0,
         help="End of normalized z-position range (0.0-1.0). Default: 1.0 (end of series)"
+    )
+
+
+def add_cache_arguments(parser):
+    """Add caching arguments (--cache-dir, --no-cache)."""
+    cache_group = parser.add_mutually_exclusive_group()
+    cache_group.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        help="Directory to store/load DICOM series index files. "
+             "Overrides default cache location. Index files are stored in "
+             "{CACHE_DIR}/indices/{SERIESUID}_index.parquet and loaded/generated automatically."
+    )
+    cache_group.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable index caching. Fetches headers fresh from storage on every run. "
+             "By default, caching is enabled using DICOM_SERIES_PREVIEW_CACHE_DIR env var "
+             "or platform-specific cache directory."
+    )
+
+
+def _load_or_generate_index(
+    index_dir: Optional[str], series_uid: str, root_path: str, verbose: bool, logger
+) -> Optional[pl.DataFrame]:
+    """
+    Load or generate a DICOM series index.
+
+    Uses IndexCache to manage loading from cache directory and auto-generating
+    if needed. Index files are named {series_uid}.index.parquet in the cache directory.
+
+    Args:
+        index_dir: Optional cache directory from --index-directory
+        series_uid: Normalized series UID
+        root_path: Root storage path
+        verbose: Verbose logging enabled
+        logger: Logger instance
+
+    Returns:
+        Polars DataFrame with index data, or None on error
+    """
+    return IndexCache.load_or_generate_index(
+        series_uid=series_uid,
+        root_path=root_path,
+        index_dir=index_dir,
+        verbose=verbose,
+        logger_instance=logger,
     )
 
 
@@ -398,8 +449,18 @@ def mosaic_command(args, logger):
             if args.start > 0.0 or args.end < 1.0:
                 logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
 
-        # Initialize retriever
-        retriever = DICOMRetriever(root_path)
+        # Load or generate index (enabled by default unless --no-cache is set)
+        index_df = None
+        use_cache = not getattr(args, 'no_cache', False)
+        if use_cache:
+            # Get cache directory from arg or use defaults (env var / platformdirs)
+            cache_dir = getattr(args, 'cache_dir', None)
+            index_df = _load_or_generate_index(
+                cache_dir, series_uid, root_path, args.verbose, logger
+            )
+
+        # Initialize retriever with optional index
+        retriever = DICOMRetriever(root_path, index_df=index_df)
 
         # Retrieve DICOM instances
         if args.verbose:
@@ -748,6 +809,7 @@ def _setup_mosaic_subcommand(subparsers):
     )
     add_common_arguments(mosaic_parser)
     add_range_arguments(mosaic_parser)
+    add_cache_arguments(mosaic_parser)
     mosaic_parser.add_argument(
         "--tile-width",
         type=int,
@@ -774,6 +836,7 @@ def _setup_get_image_subcommand(subparsers):
         help="Extract a single image from a DICOM series at a specific position"
     )
     add_common_arguments(image_parser)
+    add_cache_arguments(image_parser)
     image_parser.add_argument(
         "--position",
         type=float,
@@ -885,6 +948,9 @@ def _setup_contrast_mosaic_subcommand(subparsers):
         help="Output image quality 0-100. Default: 25 for WebP, 70+ recommended for JPEG"
     )
 
+    # Index caching arguments
+    add_cache_arguments(contrast_parser)
+
     # Utility arguments
     contrast_parser.add_argument(
         "-v", "--verbose",
@@ -897,7 +963,11 @@ def _setup_contrast_mosaic_subcommand(subparsers):
 
 def build_index_command(args, logger):
     """
-    Build a DICOM series index by capturing headers and saving to Parquet format.
+    Build DICOM series indices by capturing headers and saving to Parquet format.
+
+    Can work in two modes:
+    1. Multiple series with --cache-dir: saves to {cache_dir}/indices/{seriesuid}_index.parquet
+    2. Single series with -o: saves to {output_dir}/indices/{seriesuid}_index.parquet
 
     Args:
         args: Parsed command arguments
@@ -907,47 +977,79 @@ def build_index_command(args, logger):
         0 on success, 1 on error
     """
     try:
-        # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
-        if result is None:
+        # Determine output directory (either cache-dir or output directory)
+        if hasattr(args, 'output') and args.output:
+            # Single series mode: -o specifies the output directory
+            output_dir = Path(args.output)
+            if len(args.series) != 1:
+                logger.error("When using -o, specify exactly one series")
+                return 1
+            series_list = args.series
+        elif hasattr(args, 'cache_dir') and args.cache_dir:
+            # Multiple series mode: use cache directory
+            output_dir = Path(args.cache_dir)
+            series_list = args.series
+        else:
+            # Default: use default cache directory
+            output_dir = IndexCache.get_cache_directory()
+            series_list = args.series
+
+        if args.verbose:
+            logger.info(f"Building indices for {len(series_list)} series")
+            logger.info(f"Output directory: {output_dir}")
+
+        success_count = 0
+        for series_spec in series_list:
+            try:
+                # Parse and normalize series specification
+                result = _parse_and_normalize_series(series_spec, args.root, args.verbose, logger)
+                if result is None:
+                    logger.error(f"Failed to parse series: {series_spec}")
+                    continue
+
+                root_path, series_uid = result
+
+                if args.verbose:
+                    logger.info(f"Building index for series {series_uid}...")
+
+                # Determine index path
+                index_path = output_dir / "indices" / f"{series_uid}_index.parquet"
+
+                # Capture headers
+                capture = HeaderCapture(root_path)
+                headers_data = capture.capture_series_headers(
+                    series_uid,
+                    limit=args.limit if hasattr(args, 'limit') and args.limit else None
+                )
+
+                # Construct storage root with series UID
+                storage_root = f"{root_path}/{series_uid}/"
+
+                # Generate parquet table and write to file
+                if args.verbose:
+                    logger.info("Generating index parquet table...")
+                df = capture.generate_parquet_table(headers_data, storage_root)
+                index_path.parent.mkdir(parents=True, exist_ok=True)
+                df.write_parquet(str(index_path))
+
+                if args.verbose:
+                    logger.info(
+                        f"Index saved: {index_path} "
+                        f"({len(df)} rows, {len(df.columns)} columns)"
+                    )
+                success_count += 1
+
+            except Exception as e:
+                logger.error(f"Error processing series {series_spec}: {e}")
+
+        if success_count == 0:
             return 1
 
-        root_path, series_uid = result
-
-        # Validate output file extension
-        output_path = Path(args.output)
-        if output_path.suffix.lower() != ".parquet":
-            logger.error("Output file must have .parquet extension")
-            return 1
-
-        if args.verbose:
-            logger.info(f"Building index for series {series_uid}...")
-            logger.info(f"Root path: {root_path}")
-
-        # Capture headers
-        capture = HeaderCapture(root_path)
-        headers_data = capture.capture_series_headers(
-            series_uid,
-            limit=args.limit if hasattr(args, 'limit') and args.limit else None
-        )
-
-        # Construct storage root with series UID
-        storage_root = f"{root_path}/{series_uid}/"
-
-        # Generate parquet table and write to file
-        if args.verbose:
-            logger.info("Generating index parquet table...")
-        df = capture.generate_parquet_table(headers_data, storage_root)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(str(output_path))
-
-        if args.verbose:
-            logger.info(f"Successfully built index: {len(df)} rows, {len(df.columns)} columns")
-
+        logger.info(f"Successfully built {success_count}/{len(series_list)} indices")
         return 0
 
     except Exception as e:
-        logger.exception(f"Error capturing headers: {e}")
+        logger.exception(f"Error building indices: {e}")
         return 1
 
 
@@ -955,24 +1057,41 @@ def _setup_build_index_subcommand(subparsers):
     """
     Setup build-index subcommand with all its arguments.
 
+    Supports two modes:
+    1. Multiple series with --cache-dir: dicom-series-preview build-index SERIES1 SERIES2 ... --cache-dir /path
+    2. Single series with -o: dicom-series-preview build-index SERIES -o /output/dir
+
     Args:
         subparsers: The subparsers object from ArgumentParser
     """
     index_parser = subparsers.add_parser(
         "build-index",
-        help="Build a series index (cached headers for fast access)"
+        help="Build DICOM series indices (cached headers for fast access)"
     )
 
-    # Required positional arguments
+    # Positional argument: one or more series UIDs/paths
     index_parser.add_argument(
-        "seriesuid",
-        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
+        "series",
+        nargs="+",
+        metavar="SERIES",
+        help="DICOM Series UID(s) or path(s). Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
              "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
              "Full paths override --root parameter."
     )
-    index_parser.add_argument(
-        "output",
-        help="Output Parquet index file path"
+
+    # Output options (mutually exclusive)
+    output_group = index_parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        "-o", "--output",
+        metavar="DIR",
+        help="Output directory for index file (single series only). "
+             "Index will be saved as DIR/indices/{SERIESUID}_index.parquet"
+    )
+    output_group.add_argument(
+        "--cache-dir",
+        metavar="DIR",
+        help="Cache directory for index files (multiple series). "
+             "Indices will be saved as CACHE_DIR/indices/{SERIESUID}_index.parquet"
     )
 
     # Storage arguments

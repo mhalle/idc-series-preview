@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from obstore.store import from_url
 import pydicom
+import polars as pl
 from io import BytesIO
 
 from .slice_sorting import sort_slices
@@ -88,12 +89,13 @@ class DICOMRetriever:
 
     _handlers_configured = False
 
-    def __init__(self, root_path: str):
+    def __init__(self, root_path: str, index_df: Optional[pl.DataFrame] = None):
         """
         Initialize the retriever.
 
         Args:
             root_path: Root path for DICOM files (S3, HTTP, or local path)
+            index_df: Optional Polars DataFrame with cached index data for fast sorting
         """
         # Configure pixel data handlers once at first initialization
         if not DICOMRetriever._handlers_configured:
@@ -102,6 +104,7 @@ class DICOMRetriever:
 
         self.root_path = root_path
         self.store = self._init_store(root_path)
+        self.index_df = index_df
 
     @staticmethod
     def _init_store(root_path: str):
@@ -181,7 +184,11 @@ class DICOMRetriever:
 
     def _get_instance_path(self, series_uid: str, instance_uid: str) -> str:
         """Get the full path to a DICOM instance."""
-        return f"{series_uid}/{instance_uid}.dcm"
+        # Handle both raw instance UIDs (add .dcm) and filenames from index (already have .dcm)
+        if instance_uid.endswith(".dcm"):
+            return f"{series_uid}/{instance_uid}"
+        else:
+            return f"{series_uid}/{instance_uid}.dcm"
 
     def _get_instance_headers(
         self, series_uid: str, instance_uid: str, max_bytes: int = 5000
@@ -289,6 +296,63 @@ class DICOMRetriever:
             logger.error(f"Error listing instances for series {series_uid}: {e}")
             return []
 
+    def _get_sorted_instances_from_index(
+        self, series_uid: str, start: float = 0.0, end: float = 1.0
+    ) -> Optional[List[str]]:
+        """
+        Get sorted instance UIDs from cached index (if available).
+
+        Uses pre-sorted data from index DataFrame to avoid header retrieval.
+
+        Args:
+            series_uid: The DICOM series UID
+            start: Start of normalized z-position range (0.0-1.0)
+            end: End of normalized z-position range (0.0-1.0)
+
+        Returns:
+            List of instance filenames (UIDs) sorted by position, or None if index not available
+        """
+        if self.index_df is None:
+            return None
+
+        try:
+            # Filter to matching instances
+            df = self.index_df
+
+            # Apply range filtering if specified
+            if start > 0.0 or end < 1.0:
+                # Get min/max PrimaryPosition
+                min_pos = df["PrimaryPosition"].min()
+                max_pos = df["PrimaryPosition"].max()
+                pos_range = max_pos - min_pos
+
+                # Map normalized range to actual positions
+                start_pos = min_pos + (pos_range * start)
+                end_pos = min_pos + (pos_range * end)
+
+                # Filter instances within range
+                df = df.filter(
+                    (pl.col("PrimaryPosition") >= start_pos)
+                    & (pl.col("PrimaryPosition") <= end_pos)
+                )
+
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        f"Index range filter: {start:.1%} to {end:.1%} "
+                        f"({start_pos:.2f} to {end_pos:.2f}) selected {len(df)} instances"
+                    )
+
+            # Return filenames in sorted order (Index column should already be sorted)
+            # Use FileName column which contains the correct instance filenames
+            instances = df.select("FileName").to_series().to_list()
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Using cached index for {len(instances)} instances")
+            return instances
+
+        except Exception as e:
+            logger.warning(f"Failed to use cached index: {e}")
+            return None
+
     def get_instances_distributed(
         self, series_uid: str, count: int, start: float = 0.0, end: float = 1.0
     ) -> List[Tuple[str, pydicom.Dataset]]:
@@ -297,6 +361,8 @@ class DICOMRetriever:
 
         Selects instances evenly distributed across a specified z-position range
         to represent the full set of images in that range.
+
+        Uses cached index if available to skip header retrieval and sorting.
 
         Args:
             series_uid: The DICOM series UID
@@ -309,85 +375,108 @@ class DICOMRetriever:
             If fewer instances are found in the range than requested, returns all
             instances in the range (no duplicates).
         """
-        all_instances = self.list_instances(series_uid)
+        # Try to get sorted instances from cached index
+        sorted_instance_uids = None
+        if self.index_df is not None:
+            sorted_instance_uids = self._get_sorted_instances_from_index(
+                series_uid, start=start, end=end
+            )
 
-        if not all_instances:
-            logger.error(f"No instances found for series {series_uid}")
-            return []
+        # If we couldn't use the index, fall back to normal flow
+        if sorted_instance_uids is None:
+            all_instances = self.list_instances(series_uid)
 
-        # First pass: Get headers for all instances in parallel
-        all_headers = []
-        headers_bytes = 0
+            if not all_instances:
+                logger.error(f"No instances found for series {series_uid}")
+                return []
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {
-                executor.submit(self._get_instance_headers, series_uid, uid): uid
-                for uid in all_instances
-            }
+            # First pass: Get headers for all instances in parallel
+            all_headers = []
+            headers_bytes = 0
 
-            for future in as_completed(futures):
-                instance_uid = futures[future]
-                try:
-                    ds, size = future.result()
-                    if ds is not None:
-                        all_headers.append((instance_uid, ds))
-                        headers_bytes += min(5000, size)
-                except Exception as e:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = {
+                    executor.submit(self._get_instance_headers, series_uid, uid): uid
+                    for uid in all_instances
+                }
+
+                for future in as_completed(futures):
+                    instance_uid = futures[future]
+                    try:
+                        ds, size = future.result()
+                        if ds is not None:
+                            all_headers.append((instance_uid, ds))
+                            headers_bytes += min(5000, size)
+                    except Exception as e:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Failed to retrieve header for {instance_uid}: {e}")
+
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Retrieved headers for {len(all_headers)} instances ({headers_bytes / 1024 / 1024:.2f}MB)")
+
+            # Sort all instances by z-position, then by instance number for temporal sequences
+            sorted_headers = sorted(all_headers, key=_get_sort_key)
+
+            # Apply range filtering if not using full range
+            if start > 0.0 or end < 1.0:
+                if len(sorted_headers) > 0:
+                    # Extract z-positions for range calculation
+                    z_positions = [_get_sort_key(item)[0] for item in sorted_headers]
+                    min_z = min(z_positions)
+                    max_z = max(z_positions)
+                    z_range = max_z - min_z
+
+                    # Map normalized range [0, 1] to actual z-values
+                    start_z = min_z + (z_range * start)
+                    end_z = min_z + (z_range * end)
+
+                    # Filter instances within the range (inclusive on both ends)
+                    filtered_headers = [
+                        item for item in sorted_headers
+                        if start_z <= _get_sort_key(item)[0] <= end_z
+                    ]
+
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Failed to retrieve header for {instance_uid}: {e}")
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Retrieved headers for {len(all_headers)} instances ({headers_bytes / 1024 / 1024:.2f}MB)")
-
-        # Sort all instances by z-position, then by instance number for temporal sequences
-        sorted_headers = sorted(all_headers, key=_get_sort_key)
-
-        # Apply range filtering if not using full range
-        if start > 0.0 or end < 1.0:
-            if len(sorted_headers) > 0:
-                # Extract z-positions for range calculation
-                z_positions = [_get_sort_key(item)[0] for item in sorted_headers]
-                min_z = min(z_positions)
-                max_z = max(z_positions)
-                z_range = max_z - min_z
-
-                # Map normalized range [0, 1] to actual z-values
-                start_z = min_z + (z_range * start)
-                end_z = min_z + (z_range * end)
-
-                # Filter instances within the range (inclusive on both ends)
-                filtered_headers = [
-                    item for item in sorted_headers
-                    if start_z <= _get_sort_key(item)[0] <= end_z
-                ]
-
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Range filter: {start:.1%} to {end:.1%} ({start_z:.2f} to {end_z:.2f}) selected {len(filtered_headers)} of {len(sorted_headers)} instances")
+                        logger.debug(f"Range filter: {start:.1%} to {end:.1%} ({start_z:.2f} to {end_z:.2f}) selected {len(filtered_headers)} of {len(sorted_headers)} instances")
+                else:
+                    filtered_headers = sorted_headers
             else:
                 filtered_headers = sorted_headers
-        else:
-            filtered_headers = sorted_headers
 
-        # Select distributed instances from filtered list
-        if len(filtered_headers) <= count:
-            # Return all instances if we have fewer than requested (no duplicates)
+            # Select distributed instances from filtered list
+            if len(filtered_headers) <= count:
+                # Return all instances if we have fewer than requested (no duplicates)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Filtered range has {len(filtered_headers)} instances, less than requested {count}")
+                selected = filtered_headers
+            else:
+                # Select evenly distributed instances (includes first and last to avoid fencepost errors)
+                indices = [int(i * (len(filtered_headers) - 1) / (count - 1)) for i in range(count)]
+                selected = [filtered_headers[i] for i in indices]
+
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Filtered range has {len(filtered_headers)} instances, less than requested {count}")
-            selected = filtered_headers
-        else:
-            # Select evenly distributed instances (includes first and last to avoid fencepost errors)
-            indices = [int(i * (len(filtered_headers) - 1) / (count - 1)) for i in range(count)]
-            selected = [filtered_headers[i] for i in indices]
+                logger.debug(f"Selected {len(selected)} instances from {len(all_headers)} total")
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Selected {len(selected)} instances from {len(all_headers)} total")
+            # Extract UIDs from selected (which are now tuples of (uid, ds))
+            selected_uids = [uid for uid, ds in selected]
+        else:
+            # Using cached index
+            if len(sorted_instance_uids) <= count:
+                selected_uids = sorted_instance_uids
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Index has {len(sorted_instance_uids)} instances, less than requested {count}")
+            else:
+                # Select evenly distributed instances from sorted list
+                indices = [int(i * (len(sorted_instance_uids) - 1) / (count - 1)) for i in range(count)]
+                selected_uids = [sorted_instance_uids[i] for i in indices]
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Selected {count} instances from cached index ({len(sorted_instance_uids)} total)")
+
+            headers_bytes = 0  # No headers retrieved when using cache
 
         # Second pass: Get full pixel data only for selected instances in parallel
         results = []
         pixel_bytes = 0
-
-        # Extract UIDs from selected (which are now tuples of (uid, ds))
-        selected_uids = [uid for uid, ds in selected]
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
