@@ -412,6 +412,9 @@ class HeaderCapture:
         sorted_slices = sort_slices(slice_dicts_with_uids)
         instance_uids = [s["_uid"] for s in sorted_slices]
 
+        # Create mapping from uid to sorted slice info (for PrimaryPosition/Axis extraction)
+        uid_to_sorted_slice = {s["_uid"]: s for s in sorted_slices}
+
         # Collect all tags and identify which vary
         all_tags = set()
         for uid in instance_uids:
@@ -452,12 +455,45 @@ class HeaderCapture:
         column_data = {}
         column_types = {}
 
-        # Always include index (sort order), FileName, SliceLocation, Position coordinates
-        column_data["index"] = list(range(len(instance_uids)))
-        column_types["index"] = pl.UInt32
+        # Always include Index (sort order), FileName, and primary position/axis metadata
+        column_data["Index"] = list(range(len(instance_uids)))
+        column_types["Index"] = pl.UInt32
 
         column_data["FileName"] = [f"{uid}.dcm" for uid in instance_uids]
         column_types["FileName"] = pl.Utf8
+
+        # Extract PrimaryPosition and PrimaryAxis from sorting metadata
+        primary_positions = []
+        primary_axes = []
+        for uid in instance_uids:
+            sorted_slice = uid_to_sorted_slice[uid]
+            axis = sorted_slice.get("axis")
+            axis_label = sorted_slice.get("axis_label", "I")
+            primary_axes.append(axis_label)
+
+            # Extract actual position value (not negated sort_value)
+            if axis_label != "I":  # Spatial position
+                if "ImagePositionPatient" in sorted_slice and axis is not None:
+                    try:
+                        position = float(sorted_slice["ImagePositionPatient"][axis])
+                        primary_positions.append(position)
+                    except (ValueError, TypeError, IndexError):
+                        primary_positions.append(0.0)
+                elif "SliceLocation" in sorted_slice:
+                    try:
+                        position = float(sorted_slice["SliceLocation"])
+                        primary_positions.append(position)
+                    except (ValueError, TypeError):
+                        primary_positions.append(0.0)
+                else:
+                    primary_positions.append(0.0)
+            else:  # Instance number
+                primary_positions.append(float(sorted_slice.get("InstanceNumber", 0)))
+
+        column_data["PrimaryPosition"] = primary_positions
+        column_types["PrimaryPosition"] = pl.Float32
+        column_data["PrimaryAxis"] = primary_axes
+        column_types["PrimaryAxis"] = pl.Utf8
 
         # Helper function to get Polars type from VR code
         def get_polars_type(vr: str) -> pl.DataType:
@@ -469,25 +505,9 @@ class HeaderCapture:
 
         # Process varying fields
         for tag_hex, (keyword, vr, values) in varying_fields.items():
-            # Special handling for ImagePositionPatient (expand to 3 columns)
+            # Skip ImagePositionPatient (already stored as PrimaryPosition/PrimaryAxis)
             if keyword == "ImagePositionPatient":
-                x_vals, y_vals, z_vals = [], [], []
-                for val in values:
-                    if isinstance(val, list) and len(val) >= 3:
-                        x_vals.append(float(val[0]))
-                        y_vals.append(float(val[1]))
-                        z_vals.append(float(val[2]))
-                    else:
-                        x_vals.append(None)
-                        y_vals.append(None)
-                        z_vals.append(None)
-
-                column_data["ImagePositionPatient_X"] = x_vals
-                column_data["ImagePositionPatient_Y"] = y_vals
-                column_data["ImagePositionPatient_Z"] = z_vals
-                column_types["ImagePositionPatient_X"] = pl.Float32
-                column_types["ImagePositionPatient_Y"] = pl.Float32
-                column_types["ImagePositionPatient_Z"] = pl.Float32
+                continue
 
             # Special handling for ImageOrientationPatient (expand to 6 columns)
             elif keyword == "ImageOrientationPatient":
