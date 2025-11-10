@@ -208,3 +208,80 @@ class HeaderCapture:
             json.dump(headers_data, f, indent=2, default=str)
 
         self.logger.info(f"Headers saved to {output_path}")
+
+    def generate_compact_schema(
+        self, headers_data: dict[str, Any], storage_root: str
+    ) -> dict[str, Any]:
+        """
+        Generate a compact schema representation with constant and varying headers.
+
+        This uses a run-length encoding approach where constant headers appear once
+        and varying headers are arrays. File paths are referenced via FileName field.
+
+        Args:
+            headers_data: Headers data from capture_series_headers()
+            storage_root: Root path for storage (e.g., s3://bucket/series-uid/)
+
+        Returns:
+            Compact schema dictionary
+        """
+        instances = headers_data.get("headers", {})
+        instance_uids = sorted(instances.keys())
+
+        if not instance_uids:
+            raise ValueError("No instances in headers data")
+
+        # Collect all tags
+        all_tags = set()
+        for uid in instance_uids:
+            all_tags.update(instances[uid].keys())
+
+        # Analyze each tag
+        varying_items = {}
+        constant_items = {}
+
+        for tag in sorted(all_tags):
+            values = []
+            tag_name = None
+
+            for uid in instance_uids:
+                if tag in instances[uid]:
+                    tag_info = instances[uid][tag]
+                    if isinstance(tag_info, dict):
+                        val = tag_info.get("value")
+                        if tag_name is None:
+                            tag_name = tag_info.get("name", "?")
+                    else:
+                        val = tag_info
+                    values.append(val)
+                else:
+                    values.append("[MISSING]")
+
+            # Skip internal/unknown tags
+            if not tag_name or tag_name.startswith("_") or tag_name == "?":
+                continue
+
+            # Check if all values are the same
+            values_str = [str(v) for v in values]
+            if len(set(values_str)) == 1:
+                constant_items[tag_name] = values[0]
+            else:
+                varying_items[tag_name] = values
+
+        # Add FileName to varying headers
+        filenames = [f"{uid}.dcm" for uid in instance_uids]
+        varying_items["FileName"] = filenames
+
+        # Sort varying items for consistent output
+        varying_items = dict(sorted(varying_items.items()))
+
+        # Create schema
+        schema = {
+            "series_uid": headers_data.get("series_uid"),
+            "storage_root": storage_root,
+            "instance_count": len(instance_uids),
+            "constant_headers": constant_items,
+            "varying_headers": varying_items,
+        }
+
+        return schema

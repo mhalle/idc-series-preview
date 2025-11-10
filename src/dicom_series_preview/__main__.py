@@ -9,6 +9,7 @@ and visualization. Supports both tiled mosaics and individual image extraction.
 import argparse
 import sys
 import logging
+import json
 from pathlib import Path
 
 from .retriever import DICOMRetriever
@@ -931,11 +932,26 @@ def capture_headers_command(args, logger):
             limit=args.limit if hasattr(args, 'limit') and args.limit else None
         )
 
+        # Generate compact schema if requested
+        if args.compact:
+            if args.verbose:
+                logger.info("Generating compact schema format...")
+            # Construct storage root with series UID
+            storage_root = f"{root_path}/{series_uid}/"
+            output_data = capture.generate_compact_schema(headers_data, storage_root)
+        else:
+            output_data = headers_data
+
         # Save to JSON
-        capture.save_headers_json(headers_data, output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(output_data, f, indent=2, default=str)
 
         if args.verbose:
-            logger.info(f"Successfully captured headers for {headers_data['instances_processed']} instances")
+            if args.compact:
+                logger.info(f"Successfully saved compact schema")
+            else:
+                logger.info(f"Successfully captured headers for {headers_data['instances_processed']} instances")
 
         return 0
 
@@ -980,6 +996,12 @@ def _setup_capture_headers_subcommand(subparsers):
         "--limit",
         type=int,
         help="Limit the number of instances to process (useful for large series)"
+    )
+
+    headers_parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Output compact schema format with constant and varying headers (run-length encoded)"
     )
 
     # Utility arguments
