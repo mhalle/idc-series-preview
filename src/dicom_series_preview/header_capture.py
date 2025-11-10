@@ -9,13 +9,55 @@ Note: This is experimental functionality and subject to change/removal.
 
 import json
 import logging
+import hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pydicom
+import pydicom.datadict as dd
+import polars as pl
 
 from .retriever import DICOMRetriever
+
+
+# Map DICOM VR (Value Representation) codes to Polars types
+VR_TO_POLARS_TYPE = {
+    # Text strings
+    "AE": pl.Utf8,  # Application Entity
+    "AS": pl.Utf8,  # Age String
+    "AT": pl.Utf8,  # Attribute Tag
+    "CS": pl.Utf8,  # Code String
+    "DA": pl.Utf8,  # Date
+    "DT": pl.Utf8,  # Date Time
+    "LO": pl.Utf8,  # Long String
+    "LT": pl.Utf8,  # Long Text
+    "PN": pl.Utf8,  # Person Name
+    "SH": pl.Utf8,  # Short String
+    "ST": pl.Utf8,  # Short Text
+    "TM": pl.Utf8,  # Time
+    "UC": pl.Utf8,  # Unlimited Characters
+    "UI": pl.Utf8,  # Unique Identifier
+    "UR": pl.Utf8,  # URI/URL
+    # Numeric
+    "DS": pl.Float32,  # Decimal String
+    "FD": pl.Float64,  # Floating Point Double
+    "FL": pl.Float32,  # Floating Point Single
+    "IS": pl.Int32,  # Integer String
+    "SL": pl.Int32,  # Signed Long
+    "SS": pl.Int16,  # Signed Short
+    "UL": pl.UInt32,  # Unsigned Long
+    "US": pl.UInt32,  # Unsigned Short
+    # Binary/Other (handled specially)
+    "OB": None,  # Other Byte
+    "OD": None,  # Other Double
+    "OF": None,  # Other Float
+    "OL": None,  # Other Long
+    "OW": None,  # Other Word
+    "UN": None,  # Unknown
+    # Sequences (handled specially)
+    "SQ": None,  # Sequence
+}
 
 
 class HeaderCapture:
@@ -318,3 +360,248 @@ class HeaderCapture:
         }
 
         return schema
+
+    def generate_parquet_table(
+        self, headers_data: dict[str, Any], storage_root: str
+    ) -> pl.DataFrame:
+        """
+        Generate a Polars DataFrame from headers data for parquet export.
+
+        Dynamically determines column types from DICOM VR (Value Representation) codes.
+        Handles special fields like ImagePositionPatient by expanding into separate columns.
+
+        Instances are sorted by z-position then instance number (same as main program).
+
+        Args:
+            headers_data: Headers data from capture_series_headers()
+            storage_root: Root path for storage (e.g., s3://bucket/series-uid/)
+
+        Returns:
+            Polars DataFrame with strongly-typed columns ready for parquet export
+        """
+        instances = headers_data.get("headers", {})
+
+        if not instances:
+            raise ValueError("No instances in headers data")
+
+        # Sort instances using same method as main program
+        def get_sort_key(uid: str) -> tuple[float, float]:
+            """Create sort key (z_position, instance_number) for an instance.
+
+            Matches logic from retriever._get_sort_key():
+            1. Primary: z-position (ImagePositionPatient[2] or SliceLocation)
+            2. Secondary: instance number
+            """
+            instance_data = instances[uid]
+
+            # Get z-position (spatial ordering) - same logic as retriever._get_sort_key
+            z_position = 0.0
+            image_pos_found = False
+            slice_loc_found = False
+
+            for tag_hex, tag_info in instance_data.items():
+                if not isinstance(tag_info, dict):
+                    continue
+
+                tag_name = tag_info.get("name", "")
+                val = tag_info.get("value")
+
+                # Check ImagePositionPatient first (with length check)
+                if tag_name == "ImagePositionPatient" and not image_pos_found:
+                    if isinstance(val, list) and len(val) >= 3:
+                        try:
+                            z_position = float(val[2])
+                            image_pos_found = True
+                        except (ValueError, TypeError):
+                            pass
+
+                # Only try SliceLocation if ImagePositionPatient not found
+                if tag_name == "SliceLocation" and not image_pos_found and not slice_loc_found:
+                    try:
+                        z_position = float(val)
+                        slice_loc_found = True
+                    except (ValueError, TypeError):
+                        pass
+
+                # Exit early if we found z_position
+                if image_pos_found or slice_loc_found:
+                    break
+
+            # Get instance number (temporal ordering within same spatial location)
+            instance_number = 0.0
+            for tag_hex, tag_info in instance_data.items():
+                if not isinstance(tag_info, dict):
+                    continue
+
+                tag_name = tag_info.get("name", "")
+                if tag_name == "InstanceNumber":
+                    val = tag_info.get("value")
+                    try:
+                        instance_number = float(val)
+                        break
+                    except (ValueError, TypeError):
+                        pass
+
+            return (z_position, instance_number)
+
+        instance_uids = sorted(instances.keys(), key=get_sort_key)
+
+        # Collect all tags and identify which vary
+        all_tags = set()
+        for uid in instance_uids:
+            all_tags.update(instances[uid].keys())
+
+        # Determine varying fields with their VR codes
+        varying_fields = {}  # tag_hex -> (keyword, vr, values)
+
+        for tag_hex in sorted(all_tags):
+            values = []
+            keyword = None
+            vr = None
+
+            for uid in instance_uids:
+                if tag_hex in instances[uid]:
+                    tag_info = instances[uid][tag_hex]
+                    if isinstance(tag_info, dict):
+                        val = tag_info.get("value")
+                        if keyword is None:
+                            keyword = tag_info.get("name")
+                            vr = tag_info.get("vr")
+                    else:
+                        val = tag_info
+                    values.append(val)
+                else:
+                    values.append(None)
+
+            # Skip internal/unknown tags
+            if not keyword or keyword.startswith("_") or keyword == "?":
+                continue
+
+            # Check if values vary
+            values_str = [str(v) for v in values]
+            if len(set(values_str)) > 1:  # Has variation
+                varying_fields[tag_hex] = (keyword, vr, values)
+
+        # Build column data with dynamic typing
+        column_data = {}
+        column_types = {}
+
+        # Always include index (sort order), FileName, SliceLocation, Position coordinates
+        column_data["index"] = list(range(len(instance_uids)))
+        column_types["index"] = pl.UInt32
+
+        column_data["FileName"] = [f"{uid}.dcm" for uid in instance_uids]
+        column_types["FileName"] = pl.Utf8
+
+        # Helper function to get Polars type from VR code
+        def get_polars_type(vr: str) -> pl.DataType:
+            """Map DICOM VR code to Polars type."""
+            if vr in VR_TO_POLARS_TYPE:
+                polars_type = VR_TO_POLARS_TYPE[vr]
+                return polars_type if polars_type is not None else pl.Utf8
+            return pl.Utf8  # Default to string for unknown VR
+
+        # Process varying fields
+        for tag_hex, (keyword, vr, values) in varying_fields.items():
+            # Special handling for ImagePositionPatient (expand to 3 columns)
+            if keyword == "ImagePositionPatient":
+                x_vals, y_vals, z_vals = [], [], []
+                for val in values:
+                    if isinstance(val, list) and len(val) >= 3:
+                        x_vals.append(float(val[0]))
+                        y_vals.append(float(val[1]))
+                        z_vals.append(float(val[2]))
+                    else:
+                        x_vals.append(None)
+                        y_vals.append(None)
+                        z_vals.append(None)
+
+                column_data["ImagePositionPatient_X"] = x_vals
+                column_data["ImagePositionPatient_Y"] = y_vals
+                column_data["ImagePositionPatient_Z"] = z_vals
+                column_types["ImagePositionPatient_X"] = pl.Float32
+                column_types["ImagePositionPatient_Y"] = pl.Float32
+                column_types["ImagePositionPatient_Z"] = pl.Float32
+
+            # Special handling for ImageOrientationPatient (expand to 6 columns)
+            elif keyword == "ImageOrientationPatient":
+                col_vals = [[] for _ in range(6)]
+                for val in values:
+                    if isinstance(val, list) and len(val) >= 6:
+                        for i in range(6):
+                            col_vals[i].append(float(val[i]))
+                    else:
+                        for i in range(6):
+                            col_vals[i].append(None)
+
+                for i in range(6):
+                    col_name = f"ImageOrientationPatient_{i}"
+                    column_data[col_name] = col_vals[i]
+                    column_types[col_name] = pl.Float32
+
+            # Special handling for binary data (store size and hash)
+            elif vr in ["OB", "OW", "OD"]:
+                sizes, hashes = [], []
+                for val in values:
+                    if isinstance(val, dict) and "_type" in val:
+                        sizes.append(val.get("size", 0))
+                        hex_preview = val.get("hex_preview", "")
+                        hash_val = (
+                            hashlib.sha256(hex_preview.encode()).hexdigest()
+                            if hex_preview
+                            else ""
+                        )
+                        hashes.append(hash_val)
+                    else:
+                        sizes.append(0)
+                        hashes.append("")
+
+                column_data[f"{keyword}_Size"] = sizes
+                column_data[f"{keyword}_Hash"] = hashes
+                column_types[f"{keyword}_Size"] = pl.Int32
+                column_types[f"{keyword}_Hash"] = pl.Utf8
+
+            # Skip sequences
+            elif vr == "SQ":
+                self.logger.debug(f"Skipping sequence field: {keyword}")
+                continue
+
+            # Regular scalar/string fields
+            else:
+                polars_type = get_polars_type(vr)
+                typed_values = []
+
+                for val in values:
+                    if val is None:
+                        typed_values.append(None)
+                    elif polars_type in [pl.Int16, pl.Int32, pl.UInt32]:
+                        try:
+                            typed_values.append(int(val))
+                        except (ValueError, TypeError):
+                            typed_values.append(None)
+                    elif polars_type in [pl.Float32, pl.Float64]:
+                        try:
+                            typed_values.append(float(val))
+                        except (ValueError, TypeError):
+                            typed_values.append(None)
+                    else:
+                        typed_values.append(str(val))
+
+                column_data[keyword] = typed_values
+                column_types[keyword] = polars_type
+
+        # Create DataFrame with explicit types
+        df_dict = {}
+        for col_name, values in column_data.items():
+            col_type = column_types.get(col_name, pl.Utf8)
+            df_dict[col_name] = pl.Series(col_name, values, dtype=col_type)
+
+        df = pl.DataFrame(df_dict)
+
+        # Add metadata columns
+        df = df.with_columns(
+            pl.lit(headers_data.get("series_uid")).alias("SeriesUID"),
+            pl.lit(storage_root).alias("StorageRoot"),
+        )
+
+        return df

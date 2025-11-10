@@ -30,6 +30,7 @@ dependencies = [
     "pydicom>=2.4.0",
     "numpy>=1.24.0",
     "pillow>=10.0.0",
+    "polars>=0.20.0",
 ]
 
 [project.optional-dependencies]
