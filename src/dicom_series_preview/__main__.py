@@ -815,6 +815,62 @@ def contrast_mosaic_command(args, logger):
         return 1
 
 
+def get_index_command(args, logger):
+    """Get or create a DICOM series index and return its path."""
+    try:
+        # Parse and normalize series specification
+        result = _parse_and_normalize_series(args.series, args.root, args.verbose, logger)
+        if result is None:
+            return 1
+        root_path, series_uid = result
+
+        # Determine output directory
+        if hasattr(args, 'cache_dir') and args.cache_dir:
+            output_dir = Path(args.cache_dir)
+        else:
+            output_dir = IndexCache.get_cache_directory()
+
+        # Determine index path
+        index_path = output_dir / "indices" / f"{series_uid}_index.parquet"
+
+        if args.verbose:
+            logger.info(f"Looking for index for series {series_uid}")
+
+        # Check if index already exists
+        if index_path.exists():
+            logger.info(f"Index found: {index_path}")
+            return 0
+
+        # Index doesn't exist, build it
+        if args.verbose:
+            logger.info(f"Building index for series {series_uid}")
+
+        # Capture headers
+        capture = HeaderCapture(root_path)
+        headers_data = capture.capture_series_headers(series_uid)
+
+        if not headers_data:
+            logger.error(f"No DICOM instances found for series {series_uid}")
+            return 1
+
+        # Construct storage root with series UID
+        storage_root = f"{root_path}/{series_uid}/"
+
+        # Generate parquet table
+        if args.verbose:
+            logger.info("Generating index parquet table...")
+        df = capture.generate_parquet_table(headers_data, storage_root)
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(str(index_path))
+
+        logger.info(f"Index saved: {index_path}")
+        return 0
+
+    except Exception as e:
+        logger.exception(f"Error: {e}")
+        return 1
+
+
 def _setup_mosaic_subcommand(subparsers):
     """
     Setup mosaic subcommand with all its arguments.
@@ -1137,6 +1193,54 @@ def _setup_build_index_subcommand(subparsers):
     index_parser.set_defaults(func=build_index_command)
 
 
+def _setup_get_index_subcommand(subparsers):
+    """
+    Setup get-index subcommand to retrieve or build an index.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    get_index_parser = subparsers.add_parser(
+        "get-index",
+        help="Get or create a DICOM series index and return its path"
+    )
+
+    # Positional argument: series UID/path
+    get_index_parser.add_argument(
+        "series",
+        metavar="SERIES",
+        help="DICOM Series UID or path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
+             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+             "Full paths override --root parameter."
+    )
+
+    # Storage arguments
+    get_index_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    # Cache directory
+    get_index_parser.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        help="Directory to store/load DICOM series index files. "
+             "Overrides default cache location. Index files are stored in "
+             "{CACHE_DIR}/indices/{SERIESUID}_index.parquet and "
+             "loaded/generated automatically."
+    )
+
+    # Utility arguments
+    get_index_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    get_index_parser.set_defaults(func=get_index_command)
+
+
 def _setup_parser():
     """
     Setup and configure the main argument parser with all subcommands.
@@ -1157,6 +1261,7 @@ def _setup_parser():
     _setup_get_image_subcommand(subparsers)
     _setup_contrast_mosaic_subcommand(subparsers)
     _setup_build_index_subcommand(subparsers)
+    _setup_get_index_subcommand(subparsers)
 
     return parser
 
