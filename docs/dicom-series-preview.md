@@ -1,14 +1,14 @@
-# dicom-mosaic(1) - Generate DICOM image mosaics
+# dicom-series-preview(1) - Generate DICOM image mosaics
 
 ## SYNOPSIS
 
 ```
-dicom-mosaic [OPTIONS] SERIESUID OUTPUT
+dicom-series-preview [OPTIONS] SERIESUID OUTPUT
 ```
 
 ## DESCRIPTION
 
-`dicom-mosaic` retrieves DICOM instances from a series stored on S3, HTTP, or local filesystem, creates a tiled mosaic image, and exports the result in WebP or JPEG format.
+`dicom-series-preview` retrieves DICOM instances from a series stored on S3, HTTP, or local filesystem, creates a tiled mosaic image, and exports the result in WebP or JPEG format.
 
 The tool uses efficient range requests to retrieve only DICOM headers initially, then fetches full pixel data only for the selected instances. It supports various window/level (contrast) presets and auto-detection of optimal display settings.
 
@@ -109,101 +109,101 @@ Output image file path. Must have a `.webp`, `.jpg`, or `.jpeg` extension.
 
 ### Basic mosaic from default S3 bucket
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 ```
 
 ### Custom tile grid and size
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --tile-width 8 --tile-height 6 --image-width 64
 ```
 
 ### With lung contrast preset and custom quality
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast-preset lung -q 50
 ```
 
 ### Manual window/center settings
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --window-width 350 --window-center 50
 ```
 
 ### Auto-detect contrast
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast-preset auto
 ```
 
 ### From local filesystem
 ```
-dicom-mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+dicom-series-preview d94176e6-bc8e-4666-b143-639754258d06 output.webp \
   --root /local/dicom/path
 ```
 
 ### From custom HTTP server
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --root http://dicom-server.example.com
 ```
 
 ### Verbose output with logging
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
 ```
 
 ### Range selection - middle 60% of series
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.2 --end 0.8
 ```
 
 ### Range selection - first half of series
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.0 --end 0.5
 ```
 
 ### Range selection - last quarter of series with specific contrast
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.75 --end 1.0 --contrast-preset bone
 ```
 
 ### Single image extraction - beginning of series
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
   --position 0.0
 ```
 
 ### Single image extraction - middle of series
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
   --position 0.5
 ```
 
 ### Single image extraction - end of series with specific contrast
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
   --position 1.0 --contrast-preset lung
 ```
 
 ### Single image with slice offset - next slice
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 next_slice.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 next_slice.webp \
   --position 0.5 --slice-offset 1
 ```
 
 ### Single image with slice offset - previous slice
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 prev_slice.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 prev_slice.webp \
   --position 0.5 --slice-offset -1
 ```
 
 ### Single image with slice offset - skip ahead 5 slices
 ```
-dicom-mosaic 38902e14-b11f-4548-910e-771ee757dc82 skip_ahead.webp \
+dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 skip_ahead.webp \
   --position 0.0 --slice-offset 5
 ```
 
@@ -454,7 +454,7 @@ Unsupported codecs (without gdcm):
 
 To support additional codecs, install the optional `gdcm` dependency (available on Linux/Windows):
 ```
-pip install dicom-mosaic[gdcm]
+pip install dicom-series-preview[gdcm]
 ```
 
 ## INSTALLATION
@@ -462,13 +462,13 @@ pip install dicom-mosaic[gdcm]
 Using uv (recommended):
 ```
 uv pip install .
-uv run dicom-mosaic --help
+uv run dicom-series-preview --help
 ```
 
 Using pip:
 ```
 pip install .
-dicom-mosaic --help
+dicom-series-preview --help
 ```
 
 ## ENVIRONMENT
