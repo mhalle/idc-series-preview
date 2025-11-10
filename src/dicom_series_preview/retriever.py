@@ -1,7 +1,6 @@
 """DICOM instance retrieval from various storage backends."""
 
 import logging
-import time
 from typing import List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -532,17 +531,10 @@ class DICOMRetriever:
         Returns:
             Tuple of (instance_uid, pydicom.Dataset) or None if retrieval failed.
         """
-        t_method_start = time.time()
-
         # Fast path: Use cached index if available
         if self.index_df is not None:
-            logger.debug(f"[PERF] Using cached index for position selection")
-            t_cache_start = time.time()
-
             # Get all instances in sorted order from cache
             sorted_instances = self.index_df.sort("Index").to_dicts()
-            t_cache_lookup = time.time() - t_cache_start
-            logger.debug(f"[PERF] Cache lookup: {t_cache_lookup:.3f}s")
 
             if not sorted_instances:
                 logger.error(f"No instances in cache for series {series_uid}")
@@ -596,24 +588,16 @@ class DICOMRetriever:
                 logger.debug(f"Position {position:.1%} selected by {selection_method} (PrimaryPosition={selected_instance['PrimaryPosition']:.2f}, PrimaryAxis={selected_instance['PrimaryAxis']})")
 
             # Fetch only the pixel data for this instance
-            t_pixel_start = time.time()
             # Use filename from cache (e.g., "uuid.dcm") instead of SOPInstanceUID
             full_ds = self.get_instance_data(series_uid, filename if filename else instance_uid)
-            t_pixel_elapsed = time.time() - t_pixel_start
-            logger.debug(f"[PERF] Fetched pixel data for instance: {t_pixel_elapsed:.2f}s")
 
             if full_ds is None:
                 logger.error(f"Could not retrieve pixel data for instance {filename if filename else instance_uid}")
                 return None
 
-            t_method_total = time.time() - t_method_start
-            logger.debug(f"[PERF] get_instance_at_position (cache) total: {t_method_total:.2f}s (cache_lookup={t_cache_lookup:.3f}s, pixel={t_pixel_elapsed:.2f}s)")
-
             return (instance_uid, full_ds)
 
         # Slow path: Fetch headers from S3 if no cache available
-        logger.debug(f"[PERF] No cache available, fetching headers from S3")
-
         all_instances = self.list_instances(series_uid)
 
         if not all_instances:
@@ -622,7 +606,6 @@ class DICOMRetriever:
 
         # Get headers for all instances
         all_headers = []
-        t_headers_start = time.time()
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
@@ -639,9 +622,6 @@ class DICOMRetriever:
                 except Exception as e:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Failed to retrieve header for {instance_uid}: {e}")
-
-        t_headers_elapsed = time.time() - t_headers_start
-        logger.debug(f"[PERF] Fetched headers for {len(all_instances)} instances: {t_headers_elapsed:.2f}s")
 
         if not all_headers:
             logger.error(f"No instances could be retrieved for series {series_uid}")
@@ -745,17 +725,11 @@ class DICOMRetriever:
             logger.debug(f"Position {position:.1%} selected by {selection_method} (z={sort_key[0]:.2f}, instance_number={sort_key[1]:.0f})")
 
         # Get full pixel data for this instance
-        t_pixel_start = time.time()
         full_ds = self.get_instance_data(series_uid, instance_uid)
-        t_pixel_elapsed = time.time() - t_pixel_start
-        logger.debug(f"[PERF] Fetched pixel data for instance: {t_pixel_elapsed:.2f}s")
 
         if full_ds is None:
             logger.error(f"Could not retrieve pixel data for instance {instance_uid}")
             return None
-
-        t_method_total = time.time() - t_method_start
-        logger.debug(f"[PERF] get_instance_at_position total: {t_method_total:.2f}s (headers={t_headers_elapsed:.2f}s, pixel={t_pixel_elapsed:.2f}s)")
 
         return (instance_uid, full_ds)
 

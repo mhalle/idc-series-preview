@@ -9,7 +9,6 @@ and visualization. Supports both tiled mosaics and individual image extraction.
 import argparse
 import sys
 import logging
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -536,8 +535,6 @@ def mosaic_command(args, logger):
 def image_command(args, logger):
     """Extract a single image from a DICOM series at a specific position."""
     try:
-        t_start = time.time()
-
         # Parse and normalize series specification
         result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
         if result is None:
@@ -570,22 +567,14 @@ def image_command(args, logger):
             logger.info(f"Position: {args.position:.1%}")
 
         # Initialize retriever with optional cache support
-        t_retriever_init = time.time()
         retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
-        t_retriever_init_elapsed = time.time() - t_retriever_init
-        if args.verbose:
-            logger.info(f"[PERF] Retriever initialization: {t_retriever_init_elapsed:.2f}s")
 
         # Retrieve single instance at position
         if args.verbose:
             logger.info("Retrieving DICOM instance...")
-        t_instance_retrieval = time.time()
         instance = retriever.get_instance_at_position(
             series_uid, args.position, slice_offset=args.slice_offset
         )
-        t_instance_retrieval_elapsed = time.time() - t_instance_retrieval
-        if args.verbose:
-            logger.info(f"[PERF] Instance retrieval: {t_instance_retrieval_elapsed:.2f}s")
 
         if not instance:
             if args.slice_offset != 0:
@@ -606,11 +595,7 @@ def image_command(args, logger):
             window_settings=window_settings
         )
 
-        t_image_generation = time.time()
         output_image = generator.create_single_image(instance, retriever, series_uid)
-        t_image_generation_elapsed = time.time() - t_image_generation
-        if args.verbose:
-            logger.info(f"[PERF] Image generation: {t_image_generation_elapsed:.2f}s")
 
         if not output_image:
             logger.error("Failed to generate image")
@@ -619,20 +604,11 @@ def image_command(args, logger):
         # Save output
         if args.verbose:
             logger.info(f"Saving image to {args.output}...")
-        t_save = time.time()
         generator.save_image(
             output_image,
             args.output,
             quality=args.quality
         )
-        t_save_elapsed = time.time() - t_save
-        if args.verbose:
-            logger.info(f"[PERF] File save: {t_save_elapsed:.2f}s")
-
-        t_total = time.time() - t_start
-        if args.verbose:
-            logger.info(f"[PERF] Total time: {t_total:.2f}s")
-            logger.info(f"[PERF] Breakdown: init={t_retriever_init_elapsed:.2f}s, retrieve={t_instance_retrieval_elapsed:.2f}s, generate={t_image_generation_elapsed:.2f}s, save={t_save_elapsed:.2f}s")
 
         if args.verbose:
             logger.info("Done!")
