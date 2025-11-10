@@ -19,6 +19,7 @@ import pydicom.datadict as dd
 import polars as pl
 
 from .retriever import DICOMRetriever
+from .slice_sorting import sort_slices
 
 
 # Map DICOM VR (Value Representation) codes to Polars types
@@ -384,21 +385,12 @@ class HeaderCapture:
         if not instances:
             raise ValueError("No instances in headers data")
 
-        # Sort instances using same method as main program
-        def get_sort_key(uid: str) -> tuple[float, float]:
-            """Create sort key (z_position, instance_number) for an instance.
+        # Convert instances to slice dict format for centralized sorting
+        slice_dicts_with_uids = []
+        for uid, instance_data in instances.items():
+            slice_dict = {"_uid": uid}  # Track UID for later
 
-            Matches logic from retriever._get_sort_key():
-            1. Primary: z-position (ImagePositionPatient[2] or SliceLocation)
-            2. Secondary: instance number
-            """
-            instance_data = instances[uid]
-
-            # Get z-position (spatial ordering) - same logic as retriever._get_sort_key
-            z_position = 0.0
-            image_pos_found = False
-            slice_loc_found = False
-
+            # Extract ImagePositionPatient and InstanceNumber
             for tag_hex, tag_info in instance_data.items():
                 if not isinstance(tag_info, dict):
                     continue
@@ -406,45 +398,19 @@ class HeaderCapture:
                 tag_name = tag_info.get("name", "")
                 val = tag_info.get("value")
 
-                # Check ImagePositionPatient first (with length check)
-                if tag_name == "ImagePositionPatient" and not image_pos_found:
-                    if isinstance(val, list) and len(val) >= 3:
-                        try:
-                            z_position = float(val[2])
-                            image_pos_found = True
-                        except (ValueError, TypeError):
-                            pass
-
-                # Only try SliceLocation if ImagePositionPatient not found
-                if tag_name == "SliceLocation" and not image_pos_found and not slice_loc_found:
+                if tag_name == "ImagePositionPatient" and isinstance(val, list) and len(val) >= 3:
+                    slice_dict["ImagePositionPatient"] = val
+                elif tag_name == "InstanceNumber":
                     try:
-                        z_position = float(val)
-                        slice_loc_found = True
+                        slice_dict["InstanceNumber"] = int(val)
                     except (ValueError, TypeError):
                         pass
 
-                # Exit early if we found z_position
-                if image_pos_found or slice_loc_found:
-                    break
+            slice_dicts_with_uids.append(slice_dict)
 
-            # Get instance number (temporal ordering within same spatial location)
-            instance_number = 0.0
-            for tag_hex, tag_info in instance_data.items():
-                if not isinstance(tag_info, dict):
-                    continue
-
-                tag_name = tag_info.get("name", "")
-                if tag_name == "InstanceNumber":
-                    val = tag_info.get("value")
-                    try:
-                        instance_number = float(val)
-                        break
-                    except (ValueError, TypeError):
-                        pass
-
-            return (z_position, instance_number)
-
-        instance_uids = sorted(instances.keys(), key=get_sort_key)
+        # Use centralized sorting logic (detects axis automatically)
+        sorted_slices = sort_slices(slice_dicts_with_uids)
+        instance_uids = [s["_uid"] for s in sorted_slices]
 
         # Collect all tags and identify which vary
         all_tags = set()

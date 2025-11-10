@@ -8,6 +8,8 @@ from obstore.store import from_url
 import pydicom
 from io import BytesIO
 
+from .slice_sorting import sort_slices
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,34 +36,51 @@ def _get_sort_key(item: Tuple[str, pydicom.Dataset]) -> Tuple[float, float]:
     """
     Create a sort key for DICOM instances that handles both spatial and temporal ordering.
 
-    For temporal sequences where multiple instances share the same or similar z-position,
-    this function creates a two-level sort key:
-    1. Primary: z-position (spatial location)
+    Uses centralized slice_sorting logic to:
+    1. Detect which axis (X, Y, or Z) varies most across slices
+    2. Apply standard radiological viewing order (decreasing values)
+    3. Use instance number as secondary sort key
+
+    For temporal sequences where multiple instances share the same or similar
+    spatial position, this creates a two-level sort key:
+    1. Primary: position on dominant axis (automatically detected)
     2. Secondary: instance number (temporal ordering at same location)
 
     Args:
         item: Tuple of (instance_uid, pydicom.Dataset)
 
     Returns:
-        Tuple of (z_position, instance_number) for sorting
+        Tuple of (spatial_sort_value, instance_number) for sorting.
+        The spatial value is negated to produce radiological viewing order.
     """
     instance_uid, ds = item
 
-    # Get z-position (spatial ordering)
-    if hasattr(ds, 'ImagePositionPatient') and len(ds.ImagePositionPatient) >= 3:
-        z_position = float(ds.ImagePositionPatient[2])
-    elif hasattr(ds, 'SliceLocation'):
-        z_position = float(ds.SliceLocation)
-    else:
-        z_position = 0.0
+    # Convert dataset to slice dict format for use with slice_sorting
+    slice_dict = {}
+
+    if hasattr(ds, "ImagePositionPatient") and len(ds.ImagePositionPatient) >= 3:
+        slice_dict["ImagePositionPatient"] = list(ds.ImagePositionPatient)
+
+    if hasattr(ds, "InstanceNumber"):
+        slice_dict["InstanceNumber"] = int(ds.InstanceNumber)
+
+    # Use centralized sorting logic to detect axis and get sort value
+    # This will automatically detect which axis varies most
+    try:
+        sorted_slices = sort_slices([slice_dict])
+        sorted_slice = sorted_slices[0]
+        spatial_value = sorted_slice["sort_value"]
+    except (ValueError, KeyError):
+        # Fallback if sort_slices fails
+        spatial_value = 0.0
 
     # Get instance number (temporal ordering within same spatial location)
-    if hasattr(ds, 'InstanceNumber'):
+    if hasattr(ds, "InstanceNumber"):
         instance_number = float(ds.InstanceNumber)
     else:
         instance_number = 0.0
 
-    return (z_position, instance_number)
+    return (spatial_value, instance_number)
 
 
 class DICOMRetriever:

@@ -5,6 +5,7 @@ from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
 from .header_capture import HeaderCapture
+from .slice_sorting import sort_slices, SliceParameterization
 
 __version__ = "0.1.0"
 __all__ = [
@@ -16,4 +17,6 @@ __all__ = [
     "MosaicGenerator",
     "ContrastPresets",
     "HeaderCapture",
+    "sort_slices",
+    "SliceParameterization",
 ]
