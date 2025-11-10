@@ -1,6 +1,7 @@
 """DICOM instance retrieval from various storage backends."""
 
 import logging
+import time
 from typing import List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -515,9 +516,10 @@ class DICOMRetriever:
         Get a single DICOM instance at a specific position using priority-based selection.
 
         Selection strategy (in priority order):
-        1. If z-position varies: Map position to z-position range (select by spatial location)
-        2. If temporal data exists: Map position to temporal range (select by time)
-        3. Otherwise: Map position to index in sorted sequence (select by order)
+        1. If cache available: Use pre-computed index to select instance instantly
+        2. If z-position varies: Map position to z-position range (select by spatial location)
+        3. If temporal data exists: Map position to temporal range (select by time)
+        4. Otherwise: Map position to index in sorted sequence (select by order)
 
         Then applies slice_offset to move up/down in the sequence.
 
@@ -530,6 +532,88 @@ class DICOMRetriever:
         Returns:
             Tuple of (instance_uid, pydicom.Dataset) or None if retrieval failed.
         """
+        t_method_start = time.time()
+
+        # Fast path: Use cached index if available
+        if self.index_df is not None:
+            logger.debug(f"[PERF] Using cached index for position selection")
+            t_cache_start = time.time()
+
+            # Get all instances in sorted order from cache
+            sorted_instances = self.index_df.sort("Index").to_dicts()
+            t_cache_lookup = time.time() - t_cache_start
+            logger.debug(f"[PERF] Cache lookup: {t_cache_lookup:.3f}s")
+
+            if not sorted_instances:
+                logger.error(f"No instances in cache for series {series_uid}")
+                return None
+
+            # Extract primary positions for spatial/temporal analysis
+            primary_positions = [inst["PrimaryPosition"] for inst in sorted_instances]
+            has_z_variation = len(set(primary_positions)) > 1
+
+            selected_idx = None
+            selection_method = None
+
+            # Check if positions vary (spatial)
+            if has_z_variation:
+                min_z = min(primary_positions)
+                max_z = max(primary_positions)
+                z_range = max_z - min_z
+                target_z = min_z + (z_range * position)
+
+                # Find closest instance by position
+                closest_idx = min(
+                    range(len(sorted_instances)),
+                    key=lambda i: abs(primary_positions[i] - target_z)
+                )
+                selected_idx = closest_idx
+                selection_method = f"spatial (position {target_z:.2f}, closest at {primary_positions[closest_idx]:.2f})"
+            else:
+                # Select by sequence index
+                target_index = int(position * (len(sorted_instances) - 1))
+                selected_idx = target_index
+                selection_method = f"sequence index ({target_index} of {len(sorted_instances)})"
+
+            # Apply slice offset
+            if slice_offset != 0:
+                target_idx = selected_idx + slice_offset
+                if target_idx < 0:
+                    logger.error(f"Slice offset {slice_offset} goes before first instance (would be index {target_idx}, but valid range is 0-{len(sorted_instances)-1})")
+                    return None
+                elif target_idx >= len(sorted_instances):
+                    logger.error(f"Slice offset {slice_offset} goes past last instance (would be index {target_idx}, but valid range is 0-{len(sorted_instances)-1})")
+                    return None
+                selected_idx = target_idx
+                selection_method = f"{selection_method} + offset {slice_offset} → index {target_idx}"
+
+            selected_instance = sorted_instances[selected_idx]
+            instance_uid = selected_instance["SOPInstanceUID"]
+            # Use FileName from cache if available (it's the actual file path component)
+            filename = selected_instance.get("FileName")
+
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Position {position:.1%} selected by {selection_method} (PrimaryPosition={selected_instance['PrimaryPosition']:.2f}, PrimaryAxis={selected_instance['PrimaryAxis']})")
+
+            # Fetch only the pixel data for this instance
+            t_pixel_start = time.time()
+            # Use filename from cache (e.g., "uuid.dcm") instead of SOPInstanceUID
+            full_ds = self.get_instance_data(series_uid, filename if filename else instance_uid)
+            t_pixel_elapsed = time.time() - t_pixel_start
+            logger.debug(f"[PERF] Fetched pixel data for instance: {t_pixel_elapsed:.2f}s")
+
+            if full_ds is None:
+                logger.error(f"Could not retrieve pixel data for instance {filename if filename else instance_uid}")
+                return None
+
+            t_method_total = time.time() - t_method_start
+            logger.debug(f"[PERF] get_instance_at_position (cache) total: {t_method_total:.2f}s (cache_lookup={t_cache_lookup:.3f}s, pixel={t_pixel_elapsed:.2f}s)")
+
+            return (instance_uid, full_ds)
+
+        # Slow path: Fetch headers from S3 if no cache available
+        logger.debug(f"[PERF] No cache available, fetching headers from S3")
+
         all_instances = self.list_instances(series_uid)
 
         if not all_instances:
@@ -538,6 +622,7 @@ class DICOMRetriever:
 
         # Get headers for all instances
         all_headers = []
+        t_headers_start = time.time()
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
@@ -554,6 +639,9 @@ class DICOMRetriever:
                 except Exception as e:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Failed to retrieve header for {instance_uid}: {e}")
+
+        t_headers_elapsed = time.time() - t_headers_start
+        logger.debug(f"[PERF] Fetched headers for {len(all_instances)} instances: {t_headers_elapsed:.2f}s")
 
         if not all_headers:
             logger.error(f"No instances could be retrieved for series {series_uid}")
@@ -657,10 +745,17 @@ class DICOMRetriever:
             logger.debug(f"Position {position:.1%} selected by {selection_method} (z={sort_key[0]:.2f}, instance_number={sort_key[1]:.0f})")
 
         # Get full pixel data for this instance
+        t_pixel_start = time.time()
         full_ds = self.get_instance_data(series_uid, instance_uid)
+        t_pixel_elapsed = time.time() - t_pixel_start
+        logger.debug(f"[PERF] Fetched pixel data for instance: {t_pixel_elapsed:.2f}s")
+
         if full_ds is None:
             logger.error(f"Could not retrieve pixel data for instance {instance_uid}")
             return None
+
+        t_method_total = time.time() - t_method_start
+        logger.debug(f"[PERF] get_instance_at_position total: {t_method_total:.2f}s (headers={t_headers_elapsed:.2f}s, pixel={t_pixel_elapsed:.2f}s)")
 
         return (instance_uid, full_ds)
 
