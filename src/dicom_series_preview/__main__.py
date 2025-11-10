@@ -9,6 +9,7 @@ and visualization. Supports both tiled mosaics and individual image extraction.
 import argparse
 import sys
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -236,6 +237,35 @@ def _load_or_generate_index(
     )
 
 
+def _initialize_retriever_with_cache(
+    root_path: str, series_uid: str, args, logger
+) -> DICOMRetriever:
+    """
+    Initialize DICOMRetriever with optional cache support.
+
+    Checks if caching is enabled (default unless --no-cache is set),
+    loads or generates index if enabled, and passes to retriever.
+
+    Args:
+        root_path: Root storage path
+        series_uid: Normalized series UID
+        args: Parsed command arguments (must have cache_dir and no_cache attributes)
+        logger: Logger instance
+
+    Returns:
+        DICOMRetriever instance (with optional index_df)
+    """
+    index_df = None
+    use_cache = not getattr(args, 'no_cache', False)
+    if use_cache:
+        cache_dir = getattr(args, 'cache_dir', None)
+        index_df = _load_or_generate_index(
+            cache_dir, series_uid, root_path, args.verbose, logger
+        )
+
+    return DICOMRetriever(root_path, index_df=index_df)
+
+
 def _parse_and_normalize_series(series_spec, root, verbose, logger):
     """
     Parse, normalize, and resolve series specification.
@@ -449,18 +479,8 @@ def mosaic_command(args, logger):
             if args.start > 0.0 or args.end < 1.0:
                 logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
 
-        # Load or generate index (enabled by default unless --no-cache is set)
-        index_df = None
-        use_cache = not getattr(args, 'no_cache', False)
-        if use_cache:
-            # Get cache directory from arg or use defaults (env var / platformdirs)
-            cache_dir = getattr(args, 'cache_dir', None)
-            index_df = _load_or_generate_index(
-                cache_dir, series_uid, root_path, args.verbose, logger
-            )
-
-        # Initialize retriever with optional index
-        retriever = DICOMRetriever(root_path, index_df=index_df)
+        # Initialize retriever with optional cache support
+        retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
 
         # Retrieve DICOM instances
         if args.verbose:
@@ -516,6 +536,8 @@ def mosaic_command(args, logger):
 def image_command(args, logger):
     """Extract a single image from a DICOM series at a specific position."""
     try:
+        t_start = time.time()
+
         # Parse and normalize series specification
         result = _parse_and_normalize_series(args.seriesuid, args.root, args.verbose, logger)
         if result is None:
@@ -547,15 +569,23 @@ def image_command(args, logger):
             logger.info(f"Root: {root_path}")
             logger.info(f"Position: {args.position:.1%}")
 
-        # Initialize retriever
-        retriever = DICOMRetriever(root_path)
+        # Initialize retriever with optional cache support
+        t_retriever_init = time.time()
+        retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
+        t_retriever_init_elapsed = time.time() - t_retriever_init
+        if args.verbose:
+            logger.info(f"[PERF] Retriever initialization: {t_retriever_init_elapsed:.2f}s")
 
         # Retrieve single instance at position
         if args.verbose:
             logger.info("Retrieving DICOM instance...")
+        t_instance_retrieval = time.time()
         instance = retriever.get_instance_at_position(
             series_uid, args.position, slice_offset=args.slice_offset
         )
+        t_instance_retrieval_elapsed = time.time() - t_instance_retrieval
+        if args.verbose:
+            logger.info(f"[PERF] Instance retrieval: {t_instance_retrieval_elapsed:.2f}s")
 
         if not instance:
             if args.slice_offset != 0:
@@ -576,7 +606,11 @@ def image_command(args, logger):
             window_settings=window_settings
         )
 
+        t_image_generation = time.time()
         output_image = generator.create_single_image(instance, retriever, series_uid)
+        t_image_generation_elapsed = time.time() - t_image_generation
+        if args.verbose:
+            logger.info(f"[PERF] Image generation: {t_image_generation_elapsed:.2f}s")
 
         if not output_image:
             logger.error("Failed to generate image")
@@ -585,11 +619,20 @@ def image_command(args, logger):
         # Save output
         if args.verbose:
             logger.info(f"Saving image to {args.output}...")
+        t_save = time.time()
         generator.save_image(
             output_image,
             args.output,
             quality=args.quality
         )
+        t_save_elapsed = time.time() - t_save
+        if args.verbose:
+            logger.info(f"[PERF] File save: {t_save_elapsed:.2f}s")
+
+        t_total = time.time() - t_start
+        if args.verbose:
+            logger.info(f"[PERF] Total time: {t_total:.2f}s")
+            logger.info(f"[PERF] Breakdown: init={t_retriever_init_elapsed:.2f}s, retrieve={t_instance_retrieval_elapsed:.2f}s, generate={t_image_generation_elapsed:.2f}s, save={t_save_elapsed:.2f}s")
 
         if args.verbose:
             logger.info("Done!")
@@ -667,8 +710,8 @@ def contrast_mosaic_command(args, logger):
                 logger.info(f"Position: {args.position:.1%}")
                 logger.info(f"Contrast variations: {len(parsed_contrasts)}")
 
-            # Initialize retriever
-            retriever = DICOMRetriever(root_path)
+            # Initialize retriever with optional cache support
+            retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
 
             # Retrieve single instance at position
             if args.verbose:
@@ -715,8 +758,8 @@ def contrast_mosaic_command(args, logger):
                 logger.info(f"Tile height (instances): {tile_height}")
                 logger.info(f"Contrast variations: {len(parsed_contrasts)}")
 
-            # Initialize retriever
-            retriever = DICOMRetriever(root_path)
+            # Initialize retriever with optional cache support
+            retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
 
             # Retrieve distributed instances across range
             if args.verbose:
