@@ -9,29 +9,19 @@
 └────┬──────────────┬──────────────┬─────────────┬────────┘
      │              │              │             │
      ▼              ▼              ▼             ▼
-┌──────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐
-│ __main__ │  │IndexCache │  │Retriever │  │ Mosaic   │
-│ (parse)  │  │ (caching) │  │(fetching)│  │Generator │
-└──────────┘  └─────┬─────┘  └────┬─────┘  │(tiling)  │
-                    │             │        └──────────┘
-                    ▼             ▼
-              ┌──────────────────────────┐
-              │  HeaderCapture           │
-              │  (index generation)      │
-              └──────────┬───────────────┘
-                         │
-                         ▼
-              ┌──────────────────────────┐
-              │  Retriever               │
-              │  (parallel fetching)     │
-              └──────────┬───────────────┘
-                         │
-         ┌───────────────┼───────────────┐
-         ▼               ▼               ▼
-      ┌─────────┐  ┌──────────┐  ┌──────────┐
-      │ obstore │  │ pydicom  │  │ polars   │
-      │(S3/HTTP)│  │(DICOM)   │  │(DataF)   │
-      └─────────┘  └──────────┘  └──────────┘
+┌──────────┐  ┌─────────────┐ ┌──────────┐  ┌──────────┐
+│ __main__ │  │index_cache  │ │Retriever │  │ Mosaic   │
+│ (CLI)    │  │(load/gen)   │ │(fetch)   │  │Generator │
+└──────────┘  └──────┬──────┘ └────┬─────┘  │(tiling)  │
+                     │             │        └──────────┘
+                     └──────┬──────┘
+                            │
+              ┌─────────────┴──────────────┐
+              ▼              ▼             ▼
+           ┌─────────┐  ┌──────────┐  ┌──────────┐
+           │ obstore │  │ pydicom  │  │ polars   │
+           │(S3/HTTP)│  │(DICOM)   │  │(DataF)   │
+           └─────────┘  └──────────┘  └──────────┘
 ```
 
 ## Detailed Dependencies
@@ -39,11 +29,10 @@
 ### API Layer (api.py)
 
 **SeriesIndex class** uses:
-- `IndexCache.load_or_generate_index()` → gets Polars DataFrame with columns: {Index, PrimaryPosition, FileName, SOPInstanceUID, ...}
+- `load_or_generate_index()` (from index_cache module) → gets Polars DataFrame with columns: {Index, PrimaryPosition, FileName, SOPInstanceUID, ...}
 - `DICOMRetriever(root_path, index_df)` → initialized once, reused
+  - `get_instances(urls, headers_only)` → parallel fetch with progressive range requests
   - `get_instance_at_position(series_uid, position)` → (uid, dataset)
-  - `_get_instance_headers(series_uid, uid)` → (dataset, size)
-  - `get_instance_data(series_uid, filename)` → dataset
 - `MosaicGenerator.tile_images(images)` → PIL Image
 - `_parse_and_normalize_series()` → path parsing utility
 
@@ -56,17 +45,28 @@
 
 ### Index Caching (index_cache.py)
 
-```
-load_or_generate_index()
-├─ Try: load existing Parquet cache
-└─ Fallback:
-   └─ HeaderCapture(root_path)
-      └─ capture_series_headers(series_uid)
-         └─ retriever.list_instances()
-         └─ retriever.get_instance_data() [parallel]
-         └─ generates Polars DataFrame
-      └─ save to Parquet cache
-```
+Module-level functions (no classes) for index loading and generation:
+
+- `load_or_generate_index(series_uid, root_path, index_dir, logger)` → Polars DataFrame
+  - Primary public function for loading or generating series index
+  - Tries to load existing Parquet cache first
+  - Falls back to generating index from DICOM headers if cache missing
+
+- `get_cache_directory(index_dir=None)` → str
+  - Resolves cache directory path (platform-specific)
+
+- `_load_index(index_path, logger)` → Optional[pl.DataFrame]
+  - Private helper: loads Parquet file from cache
+
+- `_validate_index(df, series_uid, logger)` → bool
+  - Private helper: validates DataFrame structure and content
+
+- `_generate_parquet_table(datasets_by_uid, series_uid, storage_root)` → pl.DataFrame
+  - Private helper: builds Polars DataFrame from pydicom datasets
+  - Extracts key fields and applies sorting
+
+- `dicom_header_to_dict(dataset)` → dict
+  - Utility: converts pydicom Dataset to dictionary format
 
 ### Core Fetching (retriever.py)
 
@@ -112,16 +112,20 @@ DICOMRetriever(root_path, index_df)
    └─ Internal: Progressive range request strategy for headers-only mode
 ```
 
-### Index Generation (header_capture.py)
+### Index Generation (index_cache.py)
 
 ```
-HeaderCapture(root_path)
-└─ capture_series_headers(series_uid)
-   ├─ retriever.list_instances()
-   ├─ retriever._get_instance_headers() [parallel]
-   ├─ convert to dict with DICOM fields
-   └─ generate_parquet_table()
-      └─ slice_sorting.sort_slices() [for sorting info]
+load_or_generate_index(series_uid, root_path)
+├─ Try: load existing Parquet cache
+└─ Fallback:
+   ├─ retriever.list_instances(series_uid)
+   ├─ retriever.get_instances(urls, headers_only=True) [parallel]
+   │  └─ Progressive range requests for efficiency
+   ├─ _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
+   │  ├─ Extract key fields from pydicom datasets
+   │  ├─ slice_sorting.sort_slices() [for sorting info]
+   │  └─ Build Polars DataFrame with typed columns
+   └─ Save to Parquet cache
 ```
 
 ### Image Rendering (mosaic.py)
@@ -146,9 +150,13 @@ SeriesIndex("series-uid")
   ↓
 _parse_and_normalize_series() [get root_path]
   ↓
-IndexCache.load_or_generate_index()
-  ├─ Load: Parquet cache → Polars DataFrame
-  └─ Generate: HeaderCapture → save Parquet → Polars DataFrame
+load_or_generate_index(series_uid, root_path)
+  ├─ Try: Load existing Parquet cache → Polars DataFrame
+  └─ Fallback: Generate from DICOM headers
+     ├─ retriever.list_instances(series_uid)
+     ├─ retriever.get_instances(urls, headers_only=True) [parallel]
+     ├─ _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
+     └─ Save to Parquet cache
   ↓
 DICOMRetriever(root_path, index_df) [lazy init]
 ```
@@ -277,10 +285,10 @@ MosaicGenerator(tile_width=6, tile_height=6)
 - `platformdirs` - cache directory resolution
 
 **Module interdependencies:**
-- `api` ← `retriever`, `index_cache`, `mosaic`, `__main__`
+- `api` ← `retriever`, `index_cache`, `mosaic`
+- `__main__` ← `api`, `retriever`, `index_cache`, `contrast`
 - `retriever` ← `slice_sorting`
-- `index_cache` ← `retriever`, `header_capture`
-- `header_capture` ← `retriever`, `slice_sorting`
+- `index_cache` ← `retriever`, `slice_sorting`
 - `mosaic` ← `contrast`
 
 ## Progressive Header Fetching Strategy
