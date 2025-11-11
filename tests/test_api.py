@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 import numpy as np
 
-from dicom_series_preview import SeriesIndex, Contrast, Instance
+from dicom_series_preview import SeriesIndex, Contrast, Instance, PositionInterpolator
 
 
 # Test series from IDC (stable, publicly available)
@@ -696,6 +696,156 @@ class TestContrast:
         assert contrast.spec is None
         assert contrast.window_width is None
         assert contrast.window_center is None
+
+
+class TestPositionInterpolator:
+    """Tests for PositionInterpolator class."""
+
+    def test_position_interpolator_initialization(self):
+        """Test PositionInterpolator initialization."""
+        interp = PositionInterpolator(instance_count=100)
+        assert interp.instance_count == 100
+
+    def test_position_to_index_basic(self):
+        """Test basic position_to_index conversion."""
+        interp = PositionInterpolator(instance_count=100)
+
+        # Position 0.0 should map to index 0
+        assert interp.position_to_index(0.0) == 0
+
+        # Position 1.0 should map to index 99 (instance_count - 1)
+        assert interp.position_to_index(1.0) == 99
+
+        # Position 0.5 should map to middle index
+        assert interp.position_to_index(0.5) == 49
+
+    def test_position_to_index_various_positions(self):
+        """Test position_to_index with various position values."""
+        interp = PositionInterpolator(instance_count=100)
+
+        # Test multiple positions
+        assert interp.position_to_index(0.0) == 0
+        assert interp.position_to_index(0.25) == 24
+        assert interp.position_to_index(0.5) == 49
+        assert interp.position_to_index(0.75) == 74
+        assert interp.position_to_index(1.0) == 99
+
+    def test_position_to_index_with_offset(self):
+        """Test position_to_index with slice_offset."""
+        interp = PositionInterpolator(instance_count=100)
+
+        # Position 0.5 (index 49) + offset 1 = index 50
+        assert interp.position_to_index(0.5, slice_offset=1) == 50
+
+        # Position 0.5 (index 49) + offset -1 = index 48
+        assert interp.position_to_index(0.5, slice_offset=-1) == 48
+
+        # Position 0.5 (index 49) + offset 10 = index 59
+        assert interp.position_to_index(0.5, slice_offset=10) == 59
+
+        # Position 0.5 (index 49) + offset -10 = index 39
+        assert interp.position_to_index(0.5, slice_offset=-10) == 39
+
+    def test_position_to_index_offset_at_boundaries(self):
+        """Test position_to_index with offset at boundaries."""
+        interp = PositionInterpolator(instance_count=100)
+
+        # Position 0.0 (index 0) + offset 0 = index 0 (valid)
+        assert interp.position_to_index(0.0, slice_offset=0) == 0
+
+        # Position 1.0 (index 99) + offset 0 = index 99 (valid)
+        assert interp.position_to_index(1.0, slice_offset=0) == 99
+
+    def test_position_to_index_offset_out_of_bounds_positive(self):
+        """Test position_to_index raises error when offset goes past end."""
+        interp = PositionInterpolator(instance_count=100)
+
+        # Position 1.0 (index 99) + offset 1 = index 100 (out of bounds)
+        with pytest.raises(ValueError, match="Slice offset .* out of bounds"):
+            interp.position_to_index(1.0, slice_offset=1)
+
+        # Position 0.99 (index 98) + offset 2 = index 100 (out of bounds)
+        with pytest.raises(ValueError, match="Slice offset .* out of bounds"):
+            interp.position_to_index(0.99, slice_offset=2)
+
+    def test_position_to_index_offset_out_of_bounds_negative(self):
+        """Test position_to_index raises error when offset goes before start."""
+        interp = PositionInterpolator(instance_count=100)
+
+        # Position 0.0 (index 0) + offset -1 = index -1 (out of bounds)
+        with pytest.raises(ValueError, match="Slice offset .* out of bounds"):
+            interp.position_to_index(0.0, slice_offset=-1)
+
+        # Position 0.01 (index 0) + offset -2 = index -2 (out of bounds)
+        with pytest.raises(ValueError, match="Slice offset .* out of bounds"):
+            interp.position_to_index(0.01, slice_offset=-2)
+
+    def test_position_to_index_invalid_position(self):
+        """Test position_to_index raises error for invalid position."""
+        interp = PositionInterpolator(instance_count=100)
+
+        # Position < 0.0
+        with pytest.raises(ValueError, match="position must be in"):
+            interp.position_to_index(-0.1)
+
+        # Position > 1.0
+        with pytest.raises(ValueError, match="position must be in"):
+            interp.position_to_index(1.1)
+
+    def test_position_to_index_small_series(self):
+        """Test position_to_index with small series (edge case)."""
+        # Series with only 1 instance
+        interp = PositionInterpolator(instance_count=1)
+        assert interp.position_to_index(0.0) == 0
+        assert interp.position_to_index(0.5) == 0
+        assert interp.position_to_index(1.0) == 0
+
+        # Can't offset beyond bounds
+        with pytest.raises(ValueError, match="Slice offset .* out of bounds"):
+            interp.position_to_index(0.0, slice_offset=1)
+
+    def test_position_to_index_large_series(self):
+        """Test position_to_index with large series."""
+        interp = PositionInterpolator(instance_count=10000)
+
+        # Test basic conversions
+        assert interp.position_to_index(0.0) == 0
+        assert interp.position_to_index(1.0) == 9999
+        assert interp.position_to_index(0.5) == 4999
+
+        # Test with offset
+        assert interp.position_to_index(0.5, slice_offset=100) == 5099
+        assert interp.position_to_index(0.5, slice_offset=-100) == 4899
+
+    def test_position_to_index_consistent_with_get_instance(self):
+        """Test that position_to_index is consistent with get_instance usage."""
+        index = SeriesIndex(TEST_SERIES_UID, root=TEST_S3_ROOT)
+        interp = PositionInterpolator(index.instance_count)
+
+        # Test position without offset
+        position = 0.5
+        slice_num = interp.position_to_index(position)
+
+        # Both should return the same instance
+        instance_by_position = index.get_instance(position=position)
+        instance_by_slice = index.get_instance(slice_number=slice_num)
+
+        assert instance_by_position.instance_uid == instance_by_slice.instance_uid
+
+        # Test position with offset
+        position = 0.3
+        offset = 5
+        slice_num_with_offset = interp.position_to_index(position, slice_offset=offset)
+
+        # Should be able to get instance with offset directly
+        instance_with_offset = index.get_instance(
+            position=position,
+            slice_offset=offset
+        )
+        instance_by_slice_offset = index.get_instance(slice_number=slice_num_with_offset)
+
+        # Both should return the same instance
+        assert instance_with_offset.instance_uid == instance_by_slice_offset.instance_uid
 
 
 class TestIntegration:
