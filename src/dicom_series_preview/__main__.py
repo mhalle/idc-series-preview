@@ -385,35 +385,17 @@ def image_command(args, logger):
             logger.error(f"Failed to initialize series index: {e}")
             return 1
 
-        # Retrieve instance at position
+        # Retrieve instance at position with optional offset
         if args.verbose:
             logger.info("Retrieving DICOM instance...")
         try:
-            instance = series_index.get_instance(position=args.position)
+            instance = series_index.get_instance(
+                position=args.position,
+                slice_offset=args.slice_offset
+            )
         except ValueError as e:
             logger.error(f"Failed to retrieve instance: {e}")
             return 1
-
-        # Handle slice offset if specified
-        if args.slice_offset != 0:
-            try:
-                # Use retriever directly for slice offset support
-                retriever = series_index._get_or_create_retriever()
-                instance_result = retriever.get_instance_at_position(
-                    series_index.series_uid,
-                    args.position,
-                    slice_offset=args.slice_offset
-                )
-                if not instance_result:
-                    logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series")
-                    return 1
-                instance_uid, dataset = instance_result
-                # Reconstruct Instance object with offset instance
-                from .api import Instance
-                instance = Instance(instance_uid, dataset, series_index)
-            except Exception as e:
-                logger.error(f"Failed to apply slice offset: {e}")
-                return 1
 
         if args.verbose:
             logger.info(f"Retrieved instance {instance.instance_uid}")
@@ -531,35 +513,18 @@ def contrast_mosaic_command(args, logger):
                 logger.info(f"Position: {args.position:.1%}")
                 logger.info(f"Contrast variations: {len(parsed_contrasts)}")
 
-            # Retrieve single instance at position
+            # Retrieve single instance at position with optional offset
             if args.verbose:
                 logger.info("Retrieving DICOM instance...")
             try:
-                instance = series_index.get_instance(position=args.position)
+                instance = series_index.get_instance(
+                    position=args.position,
+                    slice_offset=args.slice_offset
+                )
                 instances = [instance]
             except ValueError as e:
                 logger.error(f"Failed to retrieve instance: {e}")
                 return 1
-
-            # Handle slice offset if specified
-            if args.slice_offset != 0:
-                try:
-                    retriever = series_index._get_or_create_retriever()
-                    instance_result = retriever.get_instance_at_position(
-                        series_index.series_uid,
-                        args.position,
-                        slice_offset=args.slice_offset
-                    )
-                    if not instance_result:
-                        logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series")
-                        return 1
-                    instance_uid, dataset = instance_result
-                    from .api import Instance
-                    instance = Instance(instance_uid, dataset, series_index)
-                    instances = [instance]
-                except Exception as e:
-                    logger.error(f"Failed to apply slice offset: {e}")
-                    return 1
 
             if args.verbose:
                 logger.info(f"Retrieved instance {instances[0].instance_uid}")

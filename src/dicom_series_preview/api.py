@@ -91,6 +91,53 @@ class PositionInterpolator:
 
         return positions
 
+    def position_to_index(
+        self, position: float, slice_offset: int = 0
+    ) -> int:
+        """
+        Convert normalized position to slice index with optional offset.
+
+        Parameters
+        ----------
+        position : float
+            Normalized position (0.0-1.0)
+        slice_offset : int, optional
+            Offset from the calculated index. Default: 0.
+            Examples:
+            - 1: next slice
+            - -1: previous slice
+            - 0: no offset (default)
+
+        Returns
+        -------
+        int
+            Zero-indexed slice number
+
+        Raises
+        ------
+        ValueError
+            If position is out of range or offset results in out-of-bounds index
+        """
+        if not (0.0 <= position <= 1.0):
+            raise ValueError(f"position must be in [0.0, 1.0], got {position}")
+
+        # Map position to slice index
+        base_index = int(position * (self.instance_count - 1))
+
+        # Apply offset
+        target_index = base_index + slice_offset
+
+        # Validate bounds
+        if target_index < 0 or target_index >= self.instance_count:
+            raise ValueError(
+                f"Slice offset {slice_offset} out of bounds: "
+                f"position {position:.1%} → index {base_index}, "
+                f"+ offset {slice_offset} = {target_index}, "
+                f"but valid range is 0-{self.instance_count - 1}"
+            )
+
+        return target_index
+
 
 class Contrast:
     """Contrast specification for image rendering.
@@ -685,11 +732,13 @@ class SeriesIndex:
         self,
         position: Optional[float] = None,
         slice_number: Optional[int] = None,
+        slice_offset: int = 0,
     ) -> Instance:
         """
         Get a single DICOM instance at the specified position or slice number.
 
         Convenience wrapper around get_instances() for single instance retrieval.
+        Supports optional slice offset for relative navigation.
 
         Parameters
         ----------
@@ -701,6 +750,14 @@ class SeriesIndex:
             Zero-indexed slice number in the series.
             Mutually exclusive with position.
 
+        slice_offset : int, optional
+            Offset from the initial position/slice_number by number of slices.
+            Applied after position/slice_number selection. Default: 0.
+            Examples:
+            - 1: next slice
+            - -1: previous slice
+            - 0: no offset (default)
+
         Returns
         -------
         Instance
@@ -710,6 +767,7 @@ class SeriesIndex:
         ------
         ValueError
             If both or neither position and slice_number are specified,
+            if slice_offset is out of bounds,
             or if the instance cannot be retrieved.
         """
         if (position is None and slice_number is None) or (
@@ -717,10 +775,21 @@ class SeriesIndex:
         ):
             raise ValueError("Specify either position or slice_number, not both")
 
+        # Convert position to slice_number using PositionInterpolator
         if position is not None:
-            instances = self.get_instances(positions=[position])
+            interp = PositionInterpolator(self.instance_count)
+            target_slice = interp.position_to_index(position, slice_offset=slice_offset)
+            instances = self.get_instances(slice_numbers=[target_slice])
         else:
-            instances = self.get_instances(slice_numbers=[slice_number])
+            # Handle slice_number with offset
+            target_slice = slice_number + slice_offset
+            if target_slice < 0 or target_slice >= self.instance_count:
+                raise ValueError(
+                    f"Slice offset {slice_offset} out of bounds: "
+                    f"slice {slice_number} + offset {slice_offset} = {target_slice}, "
+                    f"but series has {self.instance_count} instances (0-{self.instance_count - 1})"
+                )
+            instances = self.get_instances(slice_numbers=[target_slice])
 
         return instances[0]
 
