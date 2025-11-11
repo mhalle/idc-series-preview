@@ -293,6 +293,7 @@ def mosaic_command(args, logger):
             images = series_index.get_images(
                 positions=positions,
                 contrast=window_settings,
+                image_width=args.image_width,
                 max_workers=8,
             )
         except ValueError as e:
