@@ -8,7 +8,7 @@ import polars as pl
 import pydicom
 from PIL import Image
 
-from .__main__ import _parse_and_normalize_series
+from .series_spec import parse_and_normalize_series
 from .index_cache import load_or_generate_index
 from .retriever import DICOMRetriever
 from .image_utils import MosaicGenerator
@@ -389,7 +389,7 @@ class SeriesIndex:
         self._logger.debug(f"Initializing SeriesIndex for {series}")
 
         # Parse and normalize series specification
-        result = _parse_and_normalize_series(series, root, self._logger)
+        result = parse_and_normalize_series(series, root, self._logger)
         if result is None:
             raise ValueError(f"Could not resolve series: {series}")
 
