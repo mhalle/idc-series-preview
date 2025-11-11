@@ -276,6 +276,7 @@ class SeriesIndex:
         series: str,
         root: str = "s3://idc-open-data",
         cache_dir: Optional[str] = None,
+        use_cache: bool = True,
     ):
         """
         Initialize a series index.
@@ -295,6 +296,13 @@ class SeriesIndex:
 
         cache_dir : str or None, default None
             Cache directory for indices. If None, uses platform default.
+            Ignored if use_cache=False.
+
+        use_cache : bool, default True
+            If True, loads/generates and caches DICOM series index.
+            If False, fetches instances on-demand without caching.
+            Caching enables O(1) position lookup and faster repeated access.
+            Disable caching for one-off queries or to avoid index generation overhead.
 
         Raises
         ------
@@ -312,12 +320,18 @@ class SeriesIndex:
         self._root_path, self._series_uid = result
         self._logger.debug(f"Resolved to UID: {self._series_uid}, Root: {self._root_path}")
 
-        # Load or generate index
+        self._use_cache = use_cache
+        self._cache_dir = cache_dir
+        self._retriever = None  # Lazy-initialized retriever
+
+        # Load or generate index (either from cache or fresh)
+        # If use_cache=False, still generates but doesn't save to disk
         index_df = load_or_generate_index(
             series_uid=self._series_uid,
             root_path=self._root_path,
             index_dir=cache_dir,
             logger_instance=self._logger,
+            save_to_cache=use_cache,
         )
 
         if index_df is None:
@@ -326,8 +340,6 @@ class SeriesIndex:
             )
 
         self._index_df = index_df
-        self._cache_dir = cache_dir
-        self._retriever = None  # Lazy-initialized retriever
 
     @property
     def series_uid(self) -> str:

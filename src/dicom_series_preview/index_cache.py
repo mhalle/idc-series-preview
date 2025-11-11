@@ -520,6 +520,7 @@ def load_or_generate_index(
     root_path: str,
     index_dir: Optional[str] = None,
     logger_instance: Optional[logging.Logger] = None,
+    save_to_cache: bool = True,
 ) -> Optional[pl.DataFrame]:
     """
     Load existing index or generate new one.
@@ -529,6 +530,9 @@ def load_or_generate_index(
         root_path: Root storage path
         index_dir: Optional cache directory (None to use defaults)
         logger_instance: Logger instance (uses module logger if None)
+        save_to_cache: If True, save generated index to disk cache.
+                      If False, keep in memory only (useful for one-off queries).
+                      Cache loading is always attempted if save_to_cache=True.
 
     Returns:
         Polars DataFrame with index, or None on error
@@ -539,8 +543,8 @@ def load_or_generate_index(
     cache_dir = get_cache_directory(index_dir)
     index_path = get_index_path(series_uid, cache_dir)
 
-    # Try to load existing index
-    if index_path.exists():
+    # Try to load existing index (only if caching is enabled)
+    if save_to_cache and index_path.exists():
         log.debug(f"Loading cached index from: {index_path}")
         try:
             df = _load_index(index_path)
@@ -551,7 +555,7 @@ def load_or_generate_index(
             log.error(f"Failed to load index: {e}")
             return None
 
-    # Index doesn't exist, generate it
+    # Index doesn't exist or caching disabled, generate it
     log.info(f"Generating index for series {series_uid}...")
 
     try:
@@ -586,14 +590,19 @@ def load_or_generate_index(
         storage_root = f"{root_path}/{series_uid}/"
         df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
 
-        # Save the generated index (create indices subdirectory)
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(str(index_path))
-
-        log.info(
-            f"Index generated and saved to {index_path}: "
-            f"{len(df)} rows, {len(df.columns)} columns"
-        )
+        # Save to cache only if enabled
+        if save_to_cache:
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            df.write_parquet(str(index_path))
+            log.info(
+                f"Index generated and saved to {index_path}: "
+                f"{len(df)} rows, {len(df.columns)} columns"
+            )
+        else:
+            log.info(
+                f"Index generated (not saved): "
+                f"{len(df)} rows, {len(df.columns)} columns"
+            )
 
         return df
 
