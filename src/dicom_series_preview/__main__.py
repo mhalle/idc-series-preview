@@ -17,7 +17,7 @@ import polars as pl
 from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
-from .header_capture import HeaderCapture
+from .index_cache import _generate_parquet_table
 from .index_cache import IndexCache
 
 
@@ -842,23 +842,44 @@ def get_index_command(args, logger):
         if args.verbose:
             logger.info(f"Building index for series {series_uid}")
 
-        # Capture headers
-        capture = HeaderCapture(root_path)
-        headers_data = capture.capture_series_headers(series_uid)
+        # Fetch headers using retriever
+        try:
+            retriever = DICOMRetriever(root_path)
+            instance_uids = retriever.list_instances(series_uid)
+            if not instance_uids:
+                logger.error(f"No DICOM instances found for series {series_uid}")
+                return 1
 
-        if not headers_data:
-            logger.error(f"No DICOM instances found for series {series_uid}")
+            if args.verbose:
+                logger.info(f"Found {len(instance_uids)} instances")
+
+            # Fetch headers in parallel using progressive range requests
+            urls = [f"{series_uid}/{uid}" for uid in instance_uids]
+            datasets_list = retriever.get_instances(urls, headers_only=True, max_workers=8)
+
+            # Build dict mapping uid to dataset
+            datasets_by_uid = {}
+            for uid, dataset in zip(instance_uids, datasets_list):
+                if dataset is not None:
+                    datasets_by_uid[uid] = dataset
+
+            if not datasets_by_uid:
+                logger.error(f"Failed to fetch any headers from {len(instance_uids)} instances")
+                return 1
+
+            # Construct storage root with series UID
+            storage_root = f"{root_path}/{series_uid}/"
+
+            # Generate parquet table
+            if args.verbose:
+                logger.info("Generating index parquet table...")
+            df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            df.write_parquet(str(index_path))
+
+        except Exception as e:
+            logger.error(f"Failed to generate index: {e}")
             return 1
-
-        # Construct storage root with series UID
-        storage_root = f"{root_path}/{series_uid}/"
-
-        # Generate parquet table
-        if args.verbose:
-            logger.info("Generating index parquet table...")
-        df = capture.generate_parquet_table(headers_data, storage_root)
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(str(index_path))
 
         logger.info(f"Index saved: {index_path}")
         return 0
@@ -1087,12 +1108,30 @@ def build_index_command(args, logger):
                 # Determine index path
                 index_path = output_dir / "indices" / f"{series_uid}_index.parquet"
 
-                # Capture headers
-                capture = HeaderCapture(root_path)
-                headers_data = capture.capture_series_headers(
-                    series_uid,
-                    limit=args.limit if hasattr(args, 'limit') and args.limit else None
-                )
+                # Fetch headers using retriever
+                retriever = DICOMRetriever(root_path)
+                instance_uids = retriever.list_instances(series_uid)
+                if not instance_uids:
+                    logger.warning(f"No instances found for series {series_uid}")
+                    continue
+
+                # Apply limit if specified
+                if hasattr(args, 'limit') and args.limit:
+                    instance_uids = instance_uids[:args.limit]
+
+                # Fetch headers in parallel using progressive range requests
+                urls = [f"{series_uid}/{uid}" for uid in instance_uids]
+                datasets_list = retriever.get_instances(urls, headers_only=True, max_workers=8)
+
+                # Build dict mapping uid to dataset
+                datasets_by_uid = {}
+                for uid, dataset in zip(instance_uids, datasets_list):
+                    if dataset is not None:
+                        datasets_by_uid[uid] = dataset
+
+                if not datasets_by_uid:
+                    logger.warning(f"Failed to fetch any headers from {len(instance_uids)} instances")
+                    continue
 
                 # Construct storage root with series UID
                 storage_root = f"{root_path}/{series_uid}/"
@@ -1100,7 +1139,7 @@ def build_index_command(args, logger):
                 # Generate parquet table and write to file
                 if args.verbose:
                     logger.info("Generating index parquet table...")
-                df = capture.generate_parquet_table(headers_data, storage_root)
+                df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
                 index_path.parent.mkdir(parents=True, exist_ok=True)
                 df.write_parquet(str(index_path))
 

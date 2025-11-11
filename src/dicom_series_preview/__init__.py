@@ -4,7 +4,6 @@ from .__main__ import main, normalize_series_uid, parse_series_specification, se
 from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
-from .header_capture import HeaderCapture
 from .slice_sorting import sort_slices, SliceParameterization
 from .index_cache import IndexCache
 from .api import SeriesIndex, Contrast, Instance
@@ -18,7 +17,6 @@ __all__ = [
     "DICOMRetriever",
     "MosaicGenerator",
     "ContrastPresets",
-    "HeaderCapture",
     "sort_slices",
     "SliceParameterization",
     "IndexCache",
