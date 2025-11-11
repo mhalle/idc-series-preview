@@ -571,7 +571,7 @@ def load_or_generate_index(
         # Fetch headers in parallel using progressive range requests
         log.debug("Fetching DICOM headers...")
         urls = [f"{series_uid}/{uid}" for uid in instance_uids]
-        datasets_list = retriever.get_instances(urls, headers_only=True, max_workers=8)
+        datasets_list = retriever.get_instances(urls, headers_only=True)
 
         # Build dict mapping uid to dataset
         datasets_by_uid = {}

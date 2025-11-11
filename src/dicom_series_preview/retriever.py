@@ -10,6 +10,7 @@ import polars as pl
 from io import BytesIO
 
 from .slice_sorting import sort_slices
+from .constants import DEFAULT_MAX_WORKERS
 
 logger = logging.getLogger(__name__)
 
@@ -789,7 +790,7 @@ class DICOMRetriever:
         self,
         urls: List[str],
         headers_only: bool = False,
-        max_workers: int = 8,
+        max_workers: Optional[int] = None,
     ) -> List[Optional[pydicom.Dataset]]:
         """
         Fetch multiple DICOM instances in parallel from a list of URLs/paths.
@@ -809,6 +810,9 @@ class DICOMRetriever:
         """
         if not urls:
             return []
+
+        if max_workers is None:
+            max_workers = DEFAULT_MAX_WORKERS
 
         def fetch_single(url: str) -> Tuple[str, Optional[pydicom.Dataset]]:
             """Fetch single instance, return (url, Dataset or None)."""

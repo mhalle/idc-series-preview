@@ -557,7 +557,7 @@ class SeriesIndex:
         self,
         positions: Optional[list[float]] = None,
         slice_numbers: Optional[list[int]] = None,
-        max_workers: int = 8,
+        max_workers: Optional[int] = None,
         remove_duplicates: bool = False,
         headers_only: bool = False,
     ) -> list[Instance]:
@@ -840,7 +840,7 @@ class SeriesIndex:
         slice_numbers: Optional[list[int]] = None,
         contrast: Optional[Union[str, Contrast]] = None,
         image_width: int = 128,
-        max_workers: int = 8,
+        max_workers: Optional[int] = None,
         remove_duplicates: bool = False,
     ) -> list[Image.Image]:
         """

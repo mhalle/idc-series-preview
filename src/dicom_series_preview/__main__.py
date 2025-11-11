@@ -16,12 +16,7 @@ from .contrast import ContrastPresets
 from .index_cache import _generate_parquet_table, get_cache_directory
 from .retriever import DICOMRetriever
 from .series_spec import parse_and_normalize_series
-
-
-# Default configuration values
-DEFAULT_IMAGE_WIDTH = 256
-DEFAULT_MOSAIC_TILE_SIZE = 3
-DEFAULT_IMAGE_QUALITY = 60
+from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_MOSAIC_TILE_SIZE, DEFAULT_IMAGE_QUALITY
 
 
 def setup_logging(verbose=False):
@@ -301,7 +296,6 @@ def mosaic_command(args, logger):
                 positions=positions,
                 contrast=window_settings,
                 image_width=args.image_width,
-                max_workers=8,
             )
         except ValueError as e:
             logger.error(f"Failed to retrieve images: {e}")
@@ -691,7 +685,7 @@ def get_index_command(args, logger):
 
             # Fetch headers in parallel using progressive range requests
             urls = [f"{series_uid}/{uid}" for uid in instance_uids]
-            datasets_list = retriever.get_instances(urls, headers_only=True, max_workers=8)
+            datasets_list = retriever.get_instances(urls, headers_only=True)
 
             # Build dict mapping uid to dataset
             datasets_by_uid = {}
@@ -1016,7 +1010,7 @@ def build_index_command(args, logger):
 
                 # Fetch headers in parallel using progressive range requests
                 urls = [f"{series_uid}/{uid}" for uid in instance_uids]
-                datasets_list = retriever.get_instances(urls, headers_only=True, max_workers=8)
+                datasets_list = retriever.get_instances(urls, headers_only=True)
 
                 # Build dict mapping uid to dataset
                 datasets_by_uid = {}
