@@ -66,11 +66,26 @@ class ContrastPresets:
             "window_width": 400,
             "window_center": 50,
         },
+        # MR T1
+        "mr-t1": {
+            "window_width": 700,
+            "window_center": 300,
+        },
+        # MR T2
+        "mr-t2": {
+            "window_width": 475,
+            "window_center": 155,
+        },
+        # MR Proton density
+        "mr-proton": {
+            "window_width": 920,
+            "window_center": 420,
+        },
     }
 
     # Shortcut aliases for preset names (backward compatibility + convenience)
     SHORTCUTS: Dict[str, str] = {
-        # Old names (backward compatibility)
+        # CT shortcuts (backward compatibility)
         "lung": "ct-lung",
         "bone": "ct-bone",
         "brain": "ct-brain",
@@ -78,9 +93,13 @@ class ContrastPresets:
         "mediastinum": "ct-mediastinum",
         "liver": "ct-liver",
         "soft-tissue": "ct-soft-tissue",
-        # Convenience shortcuts
+        # CT convenience shortcuts
         "soft": "ct-soft-tissue",
         "media": "ct-mediastinum",
+        # MR shortcuts
+        "t1": "mr-t1",
+        "t2": "mr-t2",
+        "proton": "mr-proton",
     }
 
     @classmethod

@@ -66,7 +66,8 @@ def add_common_arguments(parser):
     parser.add_argument(
         "--contrast",
         help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
-             "legacy alias (lung, bone, brain, etc.), shortcut (soft for ct-soft-tissue, media for ct-mediastinum), "
+             "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
+             "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
              "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
              "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
              "Supports both slash (medical standard) and comma separators."
@@ -796,7 +797,8 @@ def _setup_image_subcommand(subparsers):
     image_parser.add_argument(
         "--contrast",
         help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
-             "legacy alias (lung, bone, brain, etc.), shortcut (soft for ct-soft-tissue, media for ct-mediastinum), "
+             "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
+             "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
              "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
              "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
              "Supports both slash (medical standard) and comma separators."
@@ -920,7 +922,8 @@ def _setup_contrast_mosaic_subcommand(subparsers):
         "--contrast",
         action="append",
         help="Contrast settings (repeatable, x-axis): CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
-             "legacy alias (lung, bone, brain, etc.), shortcut (soft, media), 'auto', 'embedded', or custom window/level. "
+             "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
+             "shortcut (soft, media, t1, t2, proton), 'auto', 'embedded', or custom window/level. "
              "Formats: '1500/500' (slash, medical standard) or '1500,500' (comma). "
              "Negative values supported (e.g., '1500/-500'). At least one --contrast is required."
     )
