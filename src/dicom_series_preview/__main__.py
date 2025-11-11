@@ -18,6 +18,12 @@ from .retriever import DICOMRetriever
 from .series_spec import parse_and_normalize_series
 
 
+# Default configuration values
+DEFAULT_IMAGE_WIDTH = 256
+DEFAULT_MOSAIC_TILE_SIZE = 3
+DEFAULT_IMAGE_QUALITY = 60
+
+
 def setup_logging(verbose=False):
     """Configure logging."""
     level = logging.DEBUG if verbose else logging.WARNING
@@ -52,8 +58,8 @@ def add_common_arguments(parser):
     parser.add_argument(
         "-w", "--image-width",
         type=int,
-        default=256,
-        help="Width of each image tile in pixels. Height will be proportionally scaled. Default: 256"
+        default=DEFAULT_IMAGE_WIDTH,
+        help=f"Width of each image tile in pixels. Height will be proportionally scaled. Default: {DEFAULT_IMAGE_WIDTH}"
     )
 
     # Contrast parameters (shared)
@@ -70,8 +76,8 @@ def add_common_arguments(parser):
     parser.add_argument(
         "-q", "--quality",
         type=int,
-        default=25,
-        help="Output image quality 0-100. Default: 25 for WebP, 70+ recommended for JPEG"
+        default=DEFAULT_IMAGE_QUALITY,
+        help=f"Output image quality 0-100. Default: {DEFAULT_IMAGE_QUALITY} for WebP, 70+ recommended for JPEG"
     )
 
     # Utility arguments
@@ -735,8 +741,8 @@ def _setup_mosaic_subcommand(subparsers):
     mosaic_parser.add_argument(
         "--tile-width",
         type=int,
-        default=3,
-        help="Number of images per row in mosaic. Default: 3"
+        default=DEFAULT_MOSAIC_TILE_SIZE,
+        help=f"Number of images per row in mosaic. Default: {DEFAULT_MOSAIC_TILE_SIZE}"
     )
     mosaic_parser.add_argument(
         "--tile-height",
@@ -800,8 +806,8 @@ def _setup_image_subcommand(subparsers):
     image_parser.add_argument(
         "-q", "--quality",
         type=int,
-        default=25,
-        help="Output image quality 0-100. Default: 25 for WebP, 70+ recommended for JPEG"
+        default=DEFAULT_IMAGE_QUALITY,
+        help=f"Output image quality 0-100. Default: {DEFAULT_IMAGE_QUALITY} for WebP, 70+ recommended for JPEG"
     )
 
     # Utility arguments
@@ -869,8 +875,8 @@ def _setup_contrast_mosaic_subcommand(subparsers):
     contrast_parser.add_argument(
         "-w", "--image-width",
         type=int,
-        default=128,
-        help="Width of each image in pixels. Height will be proportionally scaled. Default: 128"
+        default=DEFAULT_IMAGE_WIDTH,
+        help=f"Width of each image in pixels. Height will be proportionally scaled. Default: {DEFAULT_IMAGE_WIDTH}"
     )
 
     # Instance selection: position mode (single instance)
@@ -923,8 +929,8 @@ def _setup_contrast_mosaic_subcommand(subparsers):
     contrast_parser.add_argument(
         "-q", "--quality",
         type=int,
-        default=25,
-        help="Output image quality 0-100. Default: 25 for WebP, 70+ recommended for JPEG"
+        default=DEFAULT_IMAGE_QUALITY,
+        help=f"Output image quality 0-100. Default: {DEFAULT_IMAGE_QUALITY} for WebP, 70+ recommended for JPEG"
     )
 
     # Index caching arguments
