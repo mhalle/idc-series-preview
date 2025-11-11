@@ -549,11 +549,7 @@ def mosaic_command(args, logger):
 def image_command(args, logger):
     """Extract a single image from a DICOM series at a specific position."""
     try:
-        # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.seriesuid, args.root, logger)
-        if result is None:
-            return 1
-        root_path, series_uid = result
+        from .api import SeriesIndex
 
         # Validate output format
         output_path = Path(args.output)
@@ -576,40 +572,68 @@ def image_command(args, logger):
 
         if args.verbose:
             logger.info(f"Extracting single image from DICOM series")
-            logger.info(f"Series UID: {series_uid}")
-            logger.info(f"Root: {root_path}")
+            logger.info(f"Series UID: {args.seriesuid}")
+            logger.info(f"Root: {args.root}")
             logger.info(f"Position: {args.position:.1%}")
 
-        # Initialize retriever with optional cache support
-        retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
-
-        # Retrieve single instance at position
-        if args.verbose:
-            logger.info("Retrieving DICOM instance...")
-        instance = retriever.get_instance_at_position(
-            series_uid, args.position, slice_offset=args.slice_offset
-        )
-
-        if not instance:
-            if args.slice_offset != 0:
-                logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series (check error messages above for details)")
-            else:
-                logger.error(f"No DICOM instance found at position {args.position}")
+        # Create SeriesIndex with optional cache support
+        try:
+            use_cache = not getattr(args, 'no_cache', False)
+            cache_dir = getattr(args, 'cache_dir', None)
+            series_index = SeriesIndex(
+                args.seriesuid,
+                root=args.root,
+                cache_dir=cache_dir,
+                use_cache=use_cache,
+            )
+        except ValueError as e:
+            logger.error(f"Failed to initialize series index: {e}")
             return 1
 
+        # Retrieve instance at position
         if args.verbose:
-            instance_uid, _ = instance
-            logger.info(f"Retrieved instance {instance_uid}")
+            logger.info("Retrieving DICOM instance...")
+        try:
+            instance = series_index.get_instance(position=args.position)
+        except ValueError as e:
+            logger.error(f"Failed to retrieve instance: {e}")
+            return 1
 
-        # Generate single image (no mosaic)
+        # Handle slice offset if specified
+        if args.slice_offset != 0:
+            try:
+                # Use retriever directly for slice offset support
+                retriever = series_index._get_or_create_retriever()
+                instance_result = retriever.get_instance_at_position(
+                    series_index.series_uid,
+                    args.position,
+                    slice_offset=args.slice_offset
+                )
+                if not instance_result:
+                    logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series")
+                    return 1
+                instance_uid, dataset = instance_result
+                # Reconstruct Instance object with offset instance
+                from .api import Instance
+                instance = Instance(instance_uid, dataset, series_index)
+            except Exception as e:
+                logger.error(f"Failed to apply slice offset: {e}")
+                return 1
+
+        if args.verbose:
+            logger.info(f"Retrieved instance {instance.instance_uid}")
+
+        # Generate and render image
         if args.verbose:
             logger.info("Generating image...")
-        generator = MosaicGenerator(
-            image_width=args.image_width,
-            window_settings=window_settings
-        )
-
-        output_image = generator.create_single_image(instance, retriever, series_uid)
+        try:
+            output_image = instance.get_image(
+                contrast=window_settings,
+                image_width=args.image_width,
+            )
+        except ValueError as e:
+            logger.error(f"Failed to generate image: {e}")
+            return 1
 
         if not output_image:
             logger.error("Failed to generate image")
@@ -641,11 +665,7 @@ def contrast_mosaic_command(args, logger):
     Grid layout: contrasts on x-axis (columns), instances on y-axis (rows).
     """
     try:
-        # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.seriesuid, args.root, logger)
-        if result is None:
-            return 1
-        root_path, series_uid = result
+        from .api import SeriesIndex, PositionInterpolator
 
         # Validate output format
         output_path = Path(args.output)
@@ -679,8 +699,22 @@ def contrast_mosaic_command(args, logger):
                 logger.error(f"Invalid contrast argument: {e}")
                 return 1
 
+        # Create SeriesIndex with optional cache support
+        try:
+            use_cache = not getattr(args, 'no_cache', False)
+            cache_dir = getattr(args, 'cache_dir', None)
+            series_index = SeriesIndex(
+                args.seriesuid,
+                root=args.root,
+                cache_dir=cache_dir,
+                use_cache=use_cache,
+            )
+        except ValueError as e:
+            logger.error(f"Failed to initialize series index: {e}")
+            return 1
+
         # Determine instance selection mode
-        instances_list = []
+        instances = []
         tile_height = args.tile_height
 
         if has_position:
@@ -697,33 +731,43 @@ def contrast_mosaic_command(args, logger):
 
             if args.verbose:
                 logger.info(f"Generating contrast grid from DICOM series")
-                logger.info(f"Series UID: {series_uid}")
-                logger.info(f"Root: {root_path}")
+                logger.info(f"Series UID: {args.seriesuid}")
+                logger.info(f"Root: {args.root}")
                 logger.info(f"Position: {args.position:.1%}")
                 logger.info(f"Contrast variations: {len(parsed_contrasts)}")
-
-            # Initialize retriever with optional cache support
-            retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
 
             # Retrieve single instance at position
             if args.verbose:
                 logger.info("Retrieving DICOM instance...")
-            instance = retriever.get_instance_at_position(
-                series_uid, args.position, slice_offset=args.slice_offset
-            )
-
-            if not instance:
-                if args.slice_offset != 0:
-                    logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series")
-                else:
-                    logger.error(f"No DICOM instance found at position {args.position}")
+            try:
+                instance = series_index.get_instance(position=args.position)
+                instances = [instance]
+            except ValueError as e:
+                logger.error(f"Failed to retrieve instance: {e}")
                 return 1
 
-            if args.verbose:
-                instance_uid, _ = instance
-                logger.info(f"Retrieved instance {instance_uid}")
+            # Handle slice offset if specified
+            if args.slice_offset != 0:
+                try:
+                    retriever = series_index._get_or_create_retriever()
+                    instance_result = retriever.get_instance_at_position(
+                        series_index.series_uid,
+                        args.position,
+                        slice_offset=args.slice_offset
+                    )
+                    if not instance_result:
+                        logger.error(f"Slice offset {args.slice_offset} is out of bounds for this series")
+                        return 1
+                    instance_uid, dataset = instance_result
+                    from .api import Instance
+                    instance = Instance(instance_uid, dataset, series_index)
+                    instances = [instance]
+                except Exception as e:
+                    logger.error(f"Failed to apply slice offset: {e}")
+                    return 1
 
-            instances_list = [instance]
+            if args.verbose:
+                logger.info(f"Retrieved instance {instances[0].instance_uid}")
 
         else:
             # Range selection mode
@@ -744,31 +788,31 @@ def contrast_mosaic_command(args, logger):
 
             if args.verbose:
                 logger.info(f"Generating contrast grid from DICOM series")
-                logger.info(f"Series UID: {series_uid}")
-                logger.info(f"Root: {root_path}")
+                logger.info(f"Series UID: {args.seriesuid}")
+                logger.info(f"Root: {args.root}")
                 logger.info(f"Range: {args.start:.1%} to {args.end:.1%}")
                 logger.info(f"Tile height (instances): {tile_height}")
                 logger.info(f"Contrast variations: {len(parsed_contrasts)}")
 
-            # Initialize retriever with optional cache support
-            retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
+            # Generate evenly-spaced positions across range
+            interp = PositionInterpolator(series_index.instance_count)
+            positions = interp.interpolate(tile_height, start=args.start, end=args.end)
 
-            # Retrieve distributed instances across range
+            # Retrieve instances at positions
             if args.verbose:
                 logger.info("Retrieving DICOM instances...")
-            instances_list = retriever.get_instances_distributed(
-                series_uid,
-                tile_height,
-                start=args.start,
-                end=args.end
-            )
+            try:
+                instances = series_index.get_instances(positions=positions, headers_only=False)
+            except ValueError as e:
+                logger.error(f"Failed to retrieve instances: {e}")
+                return 1
 
-            if not instances_list:
+            if not instances:
                 logger.error(f"No DICOM instances found in range {args.start:.1%}-{args.end:.1%}")
                 return 1
 
             if args.verbose:
-                logger.info(f"Retrieved {len(instances_list)} instances")
+                logger.info(f"Retrieved {len(instances)} instances")
 
         # Grid layout: contrasts on x-axis, instances on y-axis
         num_contrasts = len(parsed_contrasts)
@@ -785,26 +829,27 @@ def contrast_mosaic_command(args, logger):
         # Create images: for each instance, apply all contrasts
         # Store in row-major order: all contrasts for instance 0, then all for instance 1, etc.
         all_images = []
-        for inst_idx, instance in enumerate(instances_list):
+        for inst_idx, instance in enumerate(instances):
             for contrast_idx, contrast_settings in enumerate(parsed_contrasts):
                 contrast_str = args.contrast[contrast_idx]
                 if args.verbose:
                     logger.info(
-                        f"Instance {inst_idx+1}/{len(instances_list)}, "
+                        f"Instance {inst_idx+1}/{len(instances)}, "
                         f"contrast {contrast_idx+1}/{num_contrasts}: {contrast_str}"
                     )
 
-                # Create generator with this contrast setting
-                gen = MosaicGenerator(
-                    image_width=args.image_width,
-                    window_settings=contrast_settings
-                )
-
-                img = gen.create_single_image(instance, retriever, series_uid)
-                if not img:
-                    logger.error(f"Failed to generate image for instance {inst_idx+1}, contrast {contrast_str}")
+                try:
+                    img = instance.get_image(
+                        contrast=contrast_settings,
+                        image_width=args.image_width,
+                    )
+                    if not img:
+                        logger.error(f"Failed to generate image for instance {inst_idx+1}, contrast {contrast_str}")
+                        return 1
+                    all_images.append(img)
+                except ValueError as e:
+                    logger.error(f"Failed to generate image for instance {inst_idx+1}, contrast {contrast_str}: {e}")
                     return 1
-                all_images.append(img)
 
         # Tile the images into grid
         output_image = generator.tile_images(all_images)
