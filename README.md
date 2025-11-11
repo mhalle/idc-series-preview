@@ -567,6 +567,18 @@ If you use this tool in research, please cite:
 
 ## Changelog
 
+### v0.5.0 (2025-11-11)
+
+Major refactoring with new API-first architecture:
+- New `SeriesIndex` high-level API for all operations
+- Refactored CLI to use unified API layer
+- Added MR contrast presets (T1, T2, Proton Density)
+- Improved defaults: 256px image width, 3x3 mosaic grid, quality=60
+- Added short command aliases: `-p`, `-s`, `-e`, `-w`
+- Renamed "get-image" to "image" command
+- Comprehensive test coverage for new API
+- Clean separation between presentation layer (CLI) and API layer
+
 ### v0.1.0 (2025-11-09)
 
 Initial release with:

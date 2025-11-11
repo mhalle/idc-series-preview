@@ -854,12 +854,22 @@ Index files are stored in Apache Parquet format:
 
 ## HISTORY
 
-**Version 0.1.0** (current)
+**Version 0.5.0** (current)
+- New `SeriesIndex` API-first architecture for programmatic use
+- CLI refactored to use unified API layer
 - Five commands: mosaic, image, contrast-mosaic, build-index, get-index
+- Added MR contrast presets: T1, T2, Proton Density
+- Improved defaults: 256px images, 3x3 mosaics, quality=60
+- Short command aliases: -p, -s, -e, -w, -q
 - S3, HTTP, and local filesystem support
 - Caching system with Parquet indices
-- Multiple contrast presets and custom windowing
+- Multiple contrast presets (CT and MR) and custom windowing
 - Prefix-based series search
+
+**Version 0.1.0**
+- Initial release with five commands
+- Support for S3, HTTP, and local DICOM retrieval
+- Basic caching and contrast presets
 
 ---
 

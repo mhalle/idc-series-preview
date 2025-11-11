@@ -7,7 +7,7 @@ from .contrast import ContrastPresets
 from .slice_sorting import sort_slices, SliceParameterization
 from .api import SeriesIndex, Contrast, Instance, PositionInterpolator
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"
 __all__ = [
     "normalize_series_uid",
     "parse_series_specification",
