@@ -1,14 +1,259 @@
 """High-level API for dicom-series-preview."""
 
 import logging
-from typing import Optional
+from typing import Optional, Union
 
+import numpy as np
 import polars as pl
+import pydicom
+from PIL import Image
 
 from .__main__ import _parse_and_normalize_series
 from .index_cache import IndexCache
+from .retriever import DICOMRetriever
+from .mosaic import MosaicGenerator
 
 logger = logging.getLogger(__name__)
+
+
+class Contrast:
+    """Contrast specification for image rendering.
+
+    Supports multiple ways to specify contrast:
+    - Preset names: 'lung', 'bone', 'brain', etc.
+    - Auto-detection: 'auto' or 'embedded'
+    - Window/level values: '1500/500' or '1500,-500' or '1500,500'
+    - Direct parameters: window_width=1500, window_center=500
+    """
+
+    def __init__(
+        self,
+        spec: Optional[str] = None,
+        window_width: Optional[float] = None,
+        window_center: Optional[float] = None,
+    ):
+        """
+        Initialize contrast specification.
+
+        Parameters
+        ----------
+        spec : str, optional
+            Contrast specification. Can be:
+            - Preset name: 'lung', 'bone', 'brain', etc.
+            - Auto: 'auto' or 'embedded'
+            - Window/level: '1500/500' or '1500,-500' or '1500,500'
+
+        window_width : float, optional
+            Window width for custom window/level
+
+        window_center : float, optional
+            Window center (level) for custom window/level
+        """
+        self.spec = spec
+        self.window_width = window_width
+        self.window_center = window_center
+
+
+class Instance:
+    """A single DICOM instance with rendering methods.
+
+    Wraps a pydicom.Dataset and provides image generation methods.
+    The dataset is cached in memory for efficient multi-contrast rendering.
+    """
+
+    def __init__(
+        self,
+        instance_uid: str,
+        dataset: "pydicom.Dataset",
+        series_index: "SeriesIndex",
+    ):
+        """
+        Initialize a DICOM instance.
+
+        Parameters
+        ----------
+        instance_uid : str
+            The DICOM instance UID
+        dataset : pydicom.Dataset
+            The DICOM dataset object
+        series_index : SeriesIndex
+            Reference to parent SeriesIndex for retriever access
+        """
+        self.instance_uid = instance_uid
+        self.dataset = dataset
+        self._series_index = series_index
+
+    def get_image(
+        self,
+        contrast: Optional[Union[str, Contrast]] = None,
+        image_width: int = 128,
+    ) -> Image.Image:
+        """
+        Render this instance as an image.
+
+        Parameters
+        ----------
+        contrast : str, Contrast, or None
+            Contrast specification. Can be a string, Contrast object, or None.
+            If string, will be converted to Contrast.
+
+        image_width : int, default 128
+            Width of output image in pixels. Height is scaled proportionally.
+
+        Returns
+        -------
+        PIL.Image.Image
+            Rendered image
+
+        Raises
+        ------
+        ValueError
+            If image rendering fails
+        """
+        # Normalize contrast to dict format that MosaicGenerator expects
+        window_settings = self._normalize_contrast(contrast)
+
+        # Create generator with these settings
+        generator = MosaicGenerator(
+            image_width=image_width,
+            window_settings=window_settings,
+        )
+
+        # Render image
+        img = generator.create_single_image(
+            (self.instance_uid, self.dataset),
+            retriever=self._series_index._get_or_create_retriever(),
+            series_uid=self._series_index.series_uid,
+        )
+
+        if img is None:
+            raise ValueError(f"Failed to render image for instance {self.instance_uid}")
+
+        return img
+
+    def get_pixel_array(self) -> np.ndarray:
+        """
+        Get the raw pixel array from this instance.
+
+        Includes DICOM RescaleSlope and RescaleIntercept if present.
+
+        Returns
+        -------
+        np.ndarray
+            Pixel data with rescaling applied
+
+        Raises
+        ------
+        ValueError
+            If pixel array cannot be extracted
+        """
+        try:
+            pixel_array = self.dataset.pixel_array
+
+            # Handle DICOM rescale/slope/intercept
+            if hasattr(self.dataset, "RescaleSlope") and hasattr(
+                self.dataset, "RescaleIntercept"
+            ):
+                slope = float(self.dataset.RescaleSlope)
+                intercept = float(self.dataset.RescaleIntercept)
+                pixel_array = pixel_array * slope + intercept
+
+            return pixel_array
+
+        except Exception as e:
+            raise ValueError(f"Failed to extract pixel array: {e}")
+
+    def get_contrast_grid(
+        self,
+        contrasts: list[str],
+        image_width: int = 128,
+    ) -> Image.Image:
+        """
+        Render this instance with multiple contrasts in a grid.
+
+        Parameters
+        ----------
+        contrasts : list of str
+            List of contrast specifications (preset names, 'auto', 'embedded', etc.)
+
+        image_width : int, default 128
+            Width of each output image in pixels
+
+        Returns
+        -------
+        PIL.Image.Image
+            Grid of images with different contrasts
+
+        Raises
+        ------
+        ValueError
+            If grid rendering fails
+        """
+        if not contrasts:
+            raise ValueError("Must provide at least one contrast")
+
+        # Render each contrast
+        images = []
+        for contrast_spec in contrasts:
+            try:
+                img = self.get_image(contrast=contrast_spec, image_width=image_width)
+                images.append(img)
+            except Exception as e:
+                logger.warning(f"Failed to render contrast {contrast_spec}: {e}")
+                continue
+
+        if not images:
+            raise ValueError("Failed to render any contrast images")
+
+        # Create grid (1 row, N columns for now)
+        # Simple layout: arrange horizontally
+        total_width = sum(img.width for img in images)
+        max_height = max(img.height for img in images)
+
+        grid = Image.new("L", (total_width, max_height))
+        x_offset = 0
+        for img in images:
+            grid.paste(img, (x_offset, 0))
+            x_offset += img.width
+
+        return grid
+
+    def _normalize_contrast(self, contrast: Optional[Union[str, Contrast]]) -> Union[str, dict, None]:
+        """
+        Normalize contrast input to format expected by MosaicGenerator.
+
+        Parameters
+        ----------
+        contrast : str, Contrast, or None
+            Contrast specification
+
+        Returns
+        -------
+        Union[str, dict, None]
+            Normalized contrast (string like 'auto', or dict with window settings)
+        """
+        if contrast is None:
+            return None
+
+        if isinstance(contrast, str):
+            return contrast
+
+        if isinstance(contrast, Contrast):
+            # If spec is provided, use that (handles presets, auto, embedded, WW/WL)
+            if contrast.spec is not None:
+                return contrast.spec
+
+            # If window_width/window_center are provided, return as dict
+            if contrast.window_width is not None and contrast.window_center is not None:
+                return {
+                    "window_width": contrast.window_width,
+                    "window_center": contrast.window_center,
+                }
+
+            # Default to None
+            return None
+
+        raise TypeError(f"Invalid contrast type: {type(contrast)}")
 
 
 class SeriesIndex:
@@ -82,6 +327,7 @@ class SeriesIndex:
 
         self._index_df = index_df
         self._cache_dir = cache_dir
+        self._retriever = None  # Lazy-initialized retriever
 
     @property
     def series_uid(self) -> str:
@@ -145,6 +391,363 @@ class SeriesIndex:
     def __len__(self) -> int:
         """Instance count."""
         return self.instance_count
+
+    def _get_or_create_retriever(self) -> DICOMRetriever:
+        """
+        Lazily create and cache the DICOMRetriever.
+
+        Returns
+        -------
+        DICOMRetriever
+            Initialized retriever for this series
+        """
+        if self._retriever is None:
+            self._retriever = DICOMRetriever(self._root_path, index_df=self._index_df)
+        return self._retriever
+
+    def get_instances(
+        self,
+        positions: Optional[list[float]] = None,
+        slice_numbers: Optional[list[int]] = None,
+        max_workers: int = 8,
+        remove_duplicates: bool = False,
+        headers_only: bool = False,
+    ) -> list[Instance]:
+        """
+        Fetch multiple DICOM instances in parallel.
+
+        Core method for instance retrieval. Handles parallel fetching,
+        deduplication, and optional headers-only mode.
+
+        Parameters
+        ----------
+        positions : list of float, optional
+            Normalized positions (0.0-1.0) along primary axis.
+            Mutually exclusive with slice_numbers.
+
+        slice_numbers : list of int, optional
+            Zero-indexed slice numbers in the series.
+            Mutually exclusive with positions.
+
+        max_workers : int, default 8
+            Maximum number of parallel fetch threads
+
+        remove_duplicates : bool, default False
+            If True, removes duplicate positions/slice_numbers, keeping only
+            the first occurrence. Useful when you don't know the series size.
+
+        headers_only : bool, default False
+            If True, fetches only DICOM headers (fast, lightweight metadata).
+            Instance.get_image() will still work, fetching full data when needed.
+
+        Returns
+        -------
+        list of Instance
+            Instance objects in original order, with datasets cached in memory.
+
+        Raises
+        ------
+        ValueError
+            If both/neither positions and slice_numbers specified, invalid values,
+            or if instance retrieval fails.
+        """
+        if (positions is None and slice_numbers is None) or (
+            positions is not None and slice_numbers is not None
+        ):
+            raise ValueError("Specify either positions or slice_numbers, not both")
+
+        retriever = self._get_or_create_retriever()
+
+        # Handle positions case
+        if positions is not None:
+            if not positions:
+                raise ValueError("positions list cannot be empty")
+
+            # Validate and deduplicate
+            if remove_duplicates:
+                seen = set()
+                unique_positions = []
+                for pos in positions:
+                    if pos not in seen:
+                        unique_positions.append(pos)
+                        seen.add(pos)
+                if len(unique_positions) < len(positions):
+                    logger.debug(
+                        f"Removed {len(positions) - len(unique_positions)} duplicate positions"
+                    )
+                positions = unique_positions
+            else:
+                unique_positions = positions
+
+            # Validate all positions
+            for pos in positions:
+                if not (0.0 <= pos <= 1.0):
+                    raise ValueError(f"Position must be between 0.0 and 1.0, got {pos}")
+
+            # Map positions to instance UIDs, look up filenames, and build URLs
+            urls_with_pos = []  # List of (url, pos, instance_uid) tuples
+            for pos in positions:
+                result = retriever.get_instance_at_position(self._series_uid, pos)
+                if result is None:
+                    logger.warning(f"Failed to locate instance at position {pos}")
+                    continue
+                instance_uid, _ = result
+
+                # Look up filename in index
+                matching = self._index_df.filter(pl.col("SOPInstanceUID") == instance_uid)
+                if matching.height == 0:
+                    logger.warning(f"Instance {instance_uid} not found in index")
+                    continue
+                filename = matching[0, "FileName"]
+
+                url = f"{self._series_uid}/{filename}"
+                urls_with_pos.append((url, pos, instance_uid))
+
+            if not urls_with_pos:
+                raise ValueError(f"Failed to locate any instances at {len(positions)} positions")
+
+            # Fetch all in parallel via retriever
+            urls = [url for url, _, _ in urls_with_pos]
+            datasets = retriever.get_instances(urls, headers_only=headers_only, max_workers=max_workers)
+
+            # Build result mapping
+            results = {}
+            for (url, pos, instance_uid), dataset in zip(urls_with_pos, datasets):
+                if dataset is not None:
+                    results[pos] = Instance(instance_uid, dataset, self)
+
+            # Return in position order, filtering out failed fetches
+            instances = [results[pos] for pos in unique_positions if pos in results]
+
+            if not instances:
+                raise ValueError(f"Failed to retrieve any instances from {len(positions)} positions")
+
+            return instances
+
+        else:  # slice_numbers is not None
+            if not slice_numbers:
+                raise ValueError("slice_numbers list cannot be empty")
+
+            # Validate and deduplicate
+            if remove_duplicates:
+                seen = set()
+                unique_slices = []
+                for slice_num in slice_numbers:
+                    if slice_num not in seen:
+                        unique_slices.append(slice_num)
+                        seen.add(slice_num)
+                if len(unique_slices) < len(slice_numbers):
+                    logger.debug(
+                        f"Removed {len(slice_numbers) - len(unique_slices)} duplicate slice numbers"
+                    )
+                slice_numbers = unique_slices
+            else:
+                unique_slices = slice_numbers
+
+            # Validate all slice numbers
+            for slice_num in slice_numbers:
+                if not (0 <= slice_num < self.instance_count):
+                    raise ValueError(
+                        f"Slice number {slice_num} out of bounds "
+                        f"(series has {self.instance_count} instances)"
+                    )
+
+            # Get metadata for all slices from index and build URLs
+            sorted_df = self._index_df.sort("Index")
+            urls_with_slice = []  # List of (url, slice_num, instance_uid) tuples
+            for slice_num in slice_numbers:
+                row = sorted_df[slice_num]
+                filename = row["FileName"][0]
+                instance_uid = row["SOPInstanceUID"][0]
+                url = f"{self._series_uid}/{filename}"
+                urls_with_slice.append((url, slice_num, instance_uid))
+
+            # Fetch all in parallel via retriever
+            urls = [url for url, _, _ in urls_with_slice]
+            datasets = retriever.get_instances(urls, headers_only=headers_only, max_workers=max_workers)
+
+            # Build result mapping
+            results = {}
+            for (url, slice_num, instance_uid), dataset in zip(urls_with_slice, datasets):
+                if dataset is not None:
+                    results[slice_num] = Instance(instance_uid, dataset, self)
+
+            # Return in slice order, filtering out failed fetches
+            instances = [results[s] for s in unique_slices if s in results]
+
+            if not instances:
+                raise ValueError(f"Failed to retrieve any instances from {len(slice_numbers)} slices")
+
+            return instances
+
+    def get_instance(
+        self,
+        position: Optional[float] = None,
+        slice_number: Optional[int] = None,
+    ) -> Instance:
+        """
+        Get a single DICOM instance at the specified position or slice number.
+
+        Convenience wrapper around get_instances() for single instance retrieval.
+
+        Parameters
+        ----------
+        position : float, optional
+            Normalized position (0.0-1.0) along the primary axis.
+            Mutually exclusive with slice_number.
+
+        slice_number : int, optional
+            Zero-indexed slice number in the series.
+            Mutually exclusive with position.
+
+        Returns
+        -------
+        Instance
+            The DICOM instance with cached dataset
+
+        Raises
+        ------
+        ValueError
+            If both or neither position and slice_number are specified,
+            or if the instance cannot be retrieved.
+        """
+        if (position is None and slice_number is None) or (
+            position is not None and slice_number is not None
+        ):
+            raise ValueError("Specify either position or slice_number, not both")
+
+        if position is not None:
+            instances = self.get_instances(positions=[position])
+        else:
+            instances = self.get_instances(slice_numbers=[slice_number])
+
+        return instances[0]
+
+    def get_image(
+        self,
+        position: Optional[float] = None,
+        slice_number: Optional[int] = None,
+        contrast: Optional[Union[str, Contrast]] = None,
+        image_width: int = 128,
+    ) -> Image.Image:
+        """
+        Render an image from this series.
+
+        Convenience method that fetches an instance and renders it.
+        Equivalent to: instance = index.get_instance(...); instance.get_image(...)
+
+        Parameters
+        ----------
+        position : float, optional
+            Normalized position (0.0-1.0). Mutually exclusive with slice_number.
+
+        slice_number : int, optional
+            Zero-indexed slice number. Mutually exclusive with position.
+
+        contrast : str, Contrast, or None
+            Contrast specification (preset, 'auto', 'embedded', or WW/WL)
+
+        image_width : int, default 128
+            Width of output image in pixels
+
+        Returns
+        -------
+        PIL.Image.Image
+            Rendered image
+
+        Raises
+        ------
+        ValueError
+            If position and slice_number are both/neither specified, or if
+            rendering fails.
+        """
+        instance = self.get_instance(position=position, slice_number=slice_number)
+        return instance.get_image(contrast=contrast, image_width=image_width)
+
+    def get_images(
+        self,
+        positions: Optional[list[float]] = None,
+        slice_numbers: Optional[list[int]] = None,
+        contrast: Optional[Union[str, Contrast]] = None,
+        image_width: int = 128,
+        max_workers: int = 8,
+        remove_duplicates: bool = False,
+    ) -> list[Image.Image]:
+        """
+        Render multiple images at specified positions or slice numbers.
+
+        Convenience wrapper: fetches instances and renders them in parallel.
+        Equivalent to: instances = index.get_instances(...); [inst.get_image(...) for inst in instances]
+
+        Parameters
+        ----------
+        positions : list of float, optional
+            Normalized positions (0.0-1.0) for images to render.
+            Mutually exclusive with slice_numbers.
+
+        slice_numbers : list of int, optional
+            Zero-indexed slice numbers for images to render.
+            Mutually exclusive with positions.
+
+        contrast : str, Contrast, or None
+            Contrast specification (preset, 'auto', 'embedded', or WW/WL)
+
+        image_width : int, default 128
+            Width of each output image in pixels
+
+        max_workers : int, default 8
+            Maximum number of parallel rendering threads
+
+        remove_duplicates : bool, default False
+            If True, removes duplicate positions/slice_numbers, keeping only
+            the first occurrence. Useful when you don't know the series size
+            and want to avoid rendering the same image multiple times.
+
+        Returns
+        -------
+        list of PIL.Image.Image
+            Rendered images in the order specified
+
+        Raises
+        ------
+        ValueError
+            If both/neither positions and slice_numbers specified,
+            or if any position/slice is invalid.
+        """
+        # Fetch instances (handles validation, deduplication, and parallel fetching)
+        instances = self.get_instances(
+            positions=positions,
+            slice_numbers=slice_numbers,
+            max_workers=max_workers,
+            remove_duplicates=remove_duplicates,
+            headers_only=False,  # Need full data for rendering
+        )
+
+        # Render instances in parallel
+        def render_image(instance: Instance) -> Image.Image:
+            """Render single instance."""
+            try:
+                return instance.get_image(contrast=contrast, image_width=image_width)
+            except Exception as e:
+                logger.warning(f"Failed to render image for {instance.instance_uid}: {e}")
+                raise
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(render_image, inst): i for i, inst in enumerate(instances)}
+
+            rendered = {}
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    rendered[idx] = future.result()
+                except Exception as e:
+                    logger.warning(f"Failed to render image at index {idx}: {e}")
+
+        if not rendered:
+            raise ValueError(f"Failed to render any images from {len(instances)} instances")
+
+        # Return images in original instance order
+        return [rendered[i] for i in range(len(instances)) if i in rendered]
 
     def __repr__(self) -> str:
         """String representation."""

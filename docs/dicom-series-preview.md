@@ -1,512 +1,872 @@
-# dicom-series-preview(1) - Generate DICOM image mosaics
+# dicom-series-preview(1) - DICOM series preview and visualization
+
+## NAME
+
+`dicom-series-preview` - Preview DICOM series with intelligent sampling, contrast adjustment, and flexible output formats
 
 ## SYNOPSIS
 
 ```
-dicom-series-preview [OPTIONS] SERIESUID OUTPUT
+dicom-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 ```
 
 ## DESCRIPTION
 
-`dicom-series-preview` retrieves DICOM instances from a series stored on S3, HTTP, or local filesystem, creates a tiled mosaic image, and exports the result in WebP or JPEG format.
+`dicom-series-preview` is a command-line tool for previewing DICOM medical imaging series stored on S3, HTTP, or local filesystems. It provides multiple visualization modes:
 
-The tool uses efficient range requests to retrieve only DICOM headers initially, then fetches full pixel data only for the selected instances. It supports various window/level (contrast) presets and auto-detection of optimal display settings.
+- **mosaic**: Generate tiled grids of images from a series
+- **get-image**: Extract single images at specific positions
+- **contrast-mosaic**: Create comparison grids with multiple contrast settings
+- **build-index**: Pre-build cached indices for faster access
+- **get-index**: Retrieve or create an index and return its path
 
-## ARGUMENTS
+The tool uses efficient retrieval strategies (headers first, then pixel data for selected instances) and supports advanced features like window/level presets, auto-contrast detection, and flexible series specification formats.
 
-### SERIESUID
-The DICOM Series UID. Can be specified in multiple formats:
-- Full 32-character hex UID: `38902e14b11f4548910e771ee757dc82`
-- Standard UUID format: `38902e14-b11f-4548-910e-771ee757dc82`
-- Partial prefix with wildcard: `38902e14*` or `389*`
+## COMMON OPTIONS
 
-### OUTPUT
-Output image file path. Must have a `.webp`, `.jpg`, or `.jpeg` extension.
+These options apply to most subcommands (where applicable):
 
-## OPTIONS
+### Series Specification
+
+All commands accept flexible series specifications:
+
+**Series UID Format**
+- Full UUID: `38902e14-b11f-4548-910e-771ee757dc82`
+- UUID without hyphens: `38902e14b11f4548910e771ee757dc82`
+- Prefix search: `38902e14*` or `389*` (matches first occurrence)
+- Full path: `s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82`
+- Full path: `http://example.com/dicom/38902e14-b11f-4548-910e-771ee757dc82`
+- Local path: `file:///data/dicom/38902e14-b11f-4548-910e-771ee757dc82`
+
+When a prefix or full path is used, it's automatically resolved to the complete series UID.
 
 ### Storage Options
 
 `--root PATH`
-: Root path for DICOM files. Supports S3 URLs, HTTP(S) URLs, or local filesystem paths.
+: Root path for DICOM series. Can be S3, HTTP(S), or local filesystem path.
 : Default: `s3://idc-open-data`
 : Examples:
-  - `s3://my-bucket/dicom-data`
-  - `http://example.com/medical-images`
-  - `/data/dicom` or `file:///data/dicom` for local paths
+  - `s3://idc-open-data` (public IDC bucket)
+  - `s3://my-private-bucket/dicom`
+  - `http://hospital.example.com/dicom-server`
+  - `/data/dicom` or `file:///data/dicom` (local)
 
-### Tiling Options
-
-`--tile-width WIDTH`
-: Number of images per row in the mosaic.
-: Default: `6`
-
-`--tile-height HEIGHT`
-: Number of images per column in the mosaic.
-: Default: Same as `--tile-width`
+### Image Output Options
 
 `--image-width PIXELS`
-: Width of each image tile in pixels. Height is scaled proportionally to maintain aspect ratio.
+: Width of each image or tile in pixels. Height is scaled proportionally to maintain aspect ratio.
 : Default: `128`
+: Larger values produce higher-quality output but larger files
 
 ### Contrast Options
 
-`--contrast-preset PRESET`
-: Use a predefined contrast preset for the anatomical region. Available presets:
-  - `auto` - Auto-detect optimal window/center from image statistics
-  - `lung` - Lung window (WW=1500, WC=-500)
-  - `bone` - Bone window (WW=2000, WC=300)
-  - `brain` - Brain window (WW=80, WC=40)
-  - `abdomen` - Abdomen window (WW=350, WC=50)
-  - `mediastinum` - Mediastinum window (WW=350, WC=50)
-  - `liver` - Liver window (WW=150, WC=30)
-  - `soft_tissue` - Soft tissue window (WW=400, WC=50)
+`--contrast PRESET`
+: Contrast/window-level settings. Repeatable for contrast-mosaic command.
+: Can be one of:
+  - **Presets**: `ct-lung`, `ct-bone`, `ct-brain`, `ct-abdomen`, `ct-liver`, `ct-mediastinum`, `ct-soft-tissue`
+  - **Legacy shortcuts**: `lung`, `bone`, `brain`, `abdomen`, `liver`, `mediastinum`, `soft` (for soft-tissue)
+  - **Special modes**: `auto` (auto-detect from statistics), `embedded` (use DICOM file's settings)
+  - **Custom values**: `WINDOW/CENTER` or `WINDOW,CENTER` format (e.g., `1500/500` for lung, `1500,-500` for negative center)
 
-`--window-width WIDTH`
-: Window width for manual contrast adjustment (in Hounsfield Units).
+### Cache Options
 
-`--window-center CENTER`
-: Window center for manual contrast adjustment (in Hounsfield Units).
+`--cache-dir PATH`
+: Directory to store/load DICOM series index files (Parquet format).
+: Index files are stored as `{CACHE_DIR}/indices/{SERIESUID}_index.parquet`
+: Automatically loads from cache on subsequent runs (major performance improvement)
+: Overrides platform-specific default cache location
 
-### Range Selection Options
+`--no-cache`
+: Disable index caching. Fetches DICOM headers fresh from storage every run.
+: By default caching is enabled using `DICOM_SERIES_PREVIEW_CACHE_DIR` environment variable or platform cache directory
 
-`--start FLOAT`
-: Start of normalized z-position range (0.0-1.0). Where 0.0 is the beginning (superior/head) and 1.0 is the end (inferior/tail) of the series.
-: Default: `0.0`
-: Examples: `0.0` (start from beginning), `0.2` (start at 20%), `0.5` (start at middle)
-
-`--end FLOAT`
-: End of normalized z-position range (0.0-1.0).
-: Default: `1.0`
-: Examples: `1.0` (end at end), `0.5` (end at middle), `0.75` (end at 75%)
-
-`--position FLOAT`
-: Extract single image at normalized z-position (0.0-1.0) instead of creating a mosaic.
-: When specified, no tiling is performed - outputs a single image at `--image-width` width.
-: Cannot be used with `--start`, `--end`, `--tile-width`, or `--tile-height`.
-: Examples: `0.0` (beginning/superior), `0.5` (middle), `1.0` (end/inferior)
-
-`--slice-offset INT`
-: Offset from `--position` by number of slices (can be negative).
-: Only valid when `--position` is specified.
-: Default: `0` (no offset)
-: Examples: `1` (next slice), `-1` (previous slice), `5` (5 slices ahead), `-3` (3 slices back)
-: Useful for accessing adjacent slices without changing the base position parameter.
-
-### Output Options
+### Quality Options
 
 `-q, --quality LEVEL`
-: Output image quality (0-100).
+: Output image compression quality (0-100).
 : Default: `25`
-: Lower values produce smaller files but reduced quality. Values of 25-50 are recommended for WebP.
+: Recommendations:
+  - WebP: 20-50 (good quality-to-size ratio)
+  - JPEG: 70+ (acceptable quality)
 
 ### Utility Options
 
 `-v, --verbose`
-: Enable verbose logging output. Shows detailed progress information and debug messages.
+: Enable detailed logging. Shows progress, file retrieval information, and debug messages.
 
-## EXAMPLES
+## COMMANDS
 
-### Basic mosaic from default S3 bucket
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp
-```
+### mosaic
 
-### Custom tile grid and size
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --tile-width 8 --tile-height 6 --image-width 64
-```
+Generate a tiled mosaic/grid of images from a DICOM series.
 
-### With lung contrast preset and custom quality
+**SYNOPSIS**
+
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --contrast-preset lung -q 50
+dicom-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
 ```
 
-### Manual window/center settings
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --window-width 350 --window-center 50
+**ARGUMENTS**
+
+`SERIESUID`
+: DICOM Series UID (see Series Specification above)
+
+`OUTPUT`
+: Output image path (must be `.webp`, `.jpg`, or `.jpeg`)
+
+**OPTIONS**
+
+`--tile-width WIDTH`
+: Number of images per row in the mosaic grid.
+: Default: `6`
+
+`--tile-height HEIGHT`
+: Number of images per column in the mosaic grid.
+: Default: Same as `--tile-width`
+
+`--start POSITION`
+: Start of normalized z-position range (0.0-1.0). 0.0 is superior (head), 1.0 is inferior (tail).
+: Default: `0.0`
+: When combined with `--end`, only instances within the range are selected
+
+`--end POSITION`
+: End of normalized z-position range (0.0-1.0).
+: Default: `1.0`
+
+**EXAMPLES**
+
+```bash
+# Default 6x6 grid from entire series
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp
+
+# Custom grid: 8 columns, 5 rows
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
+  --tile-width 8 --tile-height 5
+
+# Smaller tiles with better image width
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
+  --image-width 256 --tile-width 4 --tile-height 4
+
+# Middle 60% of series with lung contrast
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
+  --start 0.2 --end 0.8 --contrast lung --quality 40
+
+# High-quality output
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.jpg \
+  --quality 80 --image-width 200
 ```
 
-### Auto-detect contrast
+**BEHAVIOR**
+
+1. All instances are sorted by z-position (spatial location), then by instance number
+2. Instances are evenly distributed across the normalized range `[--start, --end]`
+3. Requested grid size determines how many instances are selected
+4. Missing instances result in blank tiles
+5. Contrast settings are applied uniformly to all tiles
+
+---
+
+### get-image
+
+Extract a single image from a DICOM series at a specific position.
+
+**SYNOPSIS**
+
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --contrast-preset auto
+dicom-series-preview get-image SERIESUID OUTPUT [OPTIONS]
 ```
 
-### From local filesystem
-```
-dicom-series-preview d94176e6-bc8e-4666-b143-639754258d06 output.webp \
-  --root /local/dicom/path
-```
+**ARGUMENTS**
 
-### From custom HTTP server
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --root http://dicom-server.example.com
-```
+`SERIESUID`
+: DICOM Series UID
 
-### Verbose output with logging
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
-```
+`OUTPUT`
+: Output image path (must be `.webp`, `.jpg`, or `.jpeg`)
 
-### Range selection - middle 60% of series
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --start 0.2 --end 0.8
-```
+**OPTIONS**
 
-### Range selection - first half of series
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --start 0.0 --end 0.5
-```
+`--position POSITION` (required)
+: Normalized z-position to extract (0.0-1.0).
+: 0.0 = beginning (superior/head), 1.0 = end (inferior/tail), 0.5 = middle
 
-### Range selection - last quarter of series with specific contrast
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
-  --start 0.75 --end 1.0 --contrast-preset bone
-```
+`--slice-offset OFFSET`
+: Offset from `--position` by number of slices (can be negative).
+: Default: `0` (no offset)
+: Examples:
+  - `1` - next slice
+  - `-1` - previous slice
+  - `5` - 5 slices forward
+  - `-3` - 3 slices backward
+: Must stay within series bounds; out-of-bounds offset will error
 
-### Single image extraction - beginning of series
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
-  --position 0.0
-```
+**EXAMPLES**
 
-### Single image extraction - middle of series
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
+```bash
+# Image at 50% position (middle of series)
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
   --position 0.5
-```
 
-### Single image extraction - end of series with specific contrast
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
-  --position 1.0 --contrast-preset lung
-```
+# Superior image with lung contrast
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
+  --position 0.0 --contrast lung
 
-### Single image with slice offset - next slice
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 next_slice.webp \
+# Inferior image with custom window/level
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
+  --position 1.0 --contrast 350/50
+
+# Adjacent slices from same position
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 slice_1.webp \
   --position 0.5 --slice-offset 1
-```
-
-### Single image with slice offset - previous slice
-```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 prev_slice.webp \
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 slice_-1.webp \
   --position 0.5 --slice-offset -1
+
+# High-resolution single image
+dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 hires.jpg \
+  --position 0.5 --image-width 512 --quality 85
 ```
 
-### Single image with slice offset - skip ahead 5 slices
+**BEHAVIOR**
+
+1. Position is mapped to instances using an intelligent strategy:
+   - If series has varying z-positions (e.g., multi-slice CT): position selects based on spatial location
+   - If series has multiple instances at same location (e.g., temporal/cardiac): position selects by time
+   - Otherwise: position selects by instance order
+2. Slice offset is applied after position selection
+3. Offset must stay within series bounds (0 to N-1 instances)
+4. Output is always a single image (no tiling)
+
+---
+
+### contrast-mosaic
+
+Create a grid comparing instance(s) under multiple contrast settings.
+
+**SYNOPSIS**
+
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 skip_ahead.webp \
-  --position 0.0 --slice-offset 5
+dicom-series-preview contrast-mosaic SERIESUID OUTPUT --contrast PRESET [--contrast PRESET ...] [OPTIONS]
 ```
 
-## BEHAVIOR
+**ARGUMENTS**
 
-### Instance Selection and Sorting
+`SERIESUID`
+: DICOM Series UID
 
-All instances in a series are sorted using a two-level key:
+`OUTPUT`
+: Output image path (must be `.webp`, `.jpg`, or `.jpeg`)
 
-1. **Primary**: z-position (spatial location) from `ImagePositionPatient[2]` or `SliceLocation`
-2. **Secondary**: `InstanceNumber` (temporal ordering for sequences at the same location)
+**OPTIONS (Instance Selection - choose one mode)**
+
+**Single Instance Mode:**
+
+`--position POSITION`
+: Extract single instance at normalized position (0.0-1.0).
+: Grid will show this instance under multiple contrasts (1 row × N contrasts columns)
+
+`--slice-offset OFFSET`
+: Offset from `--position` by number of slices.
+: Only valid with `--position`
+
+**Multiple Instance Mode:**
+
+`--start POSITION`
+: Start of z-position range (0.0-1.0).
+: Creates multiple rows of instances
+
+`--end POSITION`
+: End of z-position range (0.0-1.0).
+: Default: `1.0`
+
+`--tile-height HEIGHT`
+: Number of instances per column (rows).
+: Only used with `--start`/`--end`.
+: Default: `2`
+
+**Contrast Settings:**
+
+`--contrast PRESET` (required, repeatable)
+: One or more contrast presets (repeatable flag).
+: Each preset creates a column in the output grid.
+: See Contrast Options in COMMON OPTIONS for valid presets.
+: Examples:
+  - `--contrast lung --contrast bone --contrast brain`
+  - `--contrast auto --contrast embedded`
+  - `--contrast 1500/500 --contrast 2000/300`
+
+**EXAMPLES**
+
+```bash
+# Single instance, 3 contrast variations
+dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 contrasts.webp \
+  --position 0.5 \
+  --contrast lung --contrast bone --contrast brain
+
+# Range of instances with 2 contrasts (2 instances × 2 contrasts = 2x2 grid)
+dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 comparison.webp \
+  --start 0.3 --end 0.7 --tile-height 2 \
+  --contrast ct-brain --contrast ct-abdomen
+
+# Four contrasts of middle image
+dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 four_windows.webp \
+  --position 0.5 \
+  --contrast lung --contrast bone --contrast brain --contrast soft
+
+# Auto vs embedded contrast comparison
+dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 auto_vs_embedded.webp \
+  --position 0.5 \
+  --contrast auto --contrast embedded
+
+# Custom window/level comparisons
+dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 custom.webp \
+  --position 0.5 \
+  --contrast 1500/500 --contrast 2000/300 --contrast 400/40 --contrast 350/50
+```
+
+**BEHAVIOR**
+
+1. Grid layout: contrasts on x-axis (columns), instances on y-axis (rows)
+2. Single instance mode: 1 row, N columns (where N = number of contrasts)
+3. Range mode: M rows (M = tile-height), N columns (N = number of contrasts)
+4. Each cell is rendered independently with its contrast setting
+5. Contrast settings are applied uniformly across instances
+
+---
+
+### build-index
+
+Pre-build cached index files for one or more DICOM series.
+
+**SYNOPSIS**
+
+```
+dicom-series-preview build-index SERIES [SERIES ...] [OPTIONS]
+```
+
+**ARGUMENTS**
+
+`SERIES`
+: One or more series UIDs/paths (repeatable positional arguments)
+
+**OPTIONS**
+
+`--root PATH`
+: Root path for DICOM series.
+: Default: `s3://idc-open-data`
+
+`--cache-dir DIR`
+: Output directory for index files.
+: Indices stored as `{CACHE_DIR}/indices/{SERIESUID}_index.parquet`
+: Mutually exclusive with `-o/--output`
+
+`-o, --output DIR`
+: Output directory for a single series.
+: Only valid when exactly one series is specified.
+: Mutually exclusive with `--cache-dir`
+
+`--limit INT`
+: Limit the number of instances to process (useful for very large series).
+: Default: no limit (process all instances)
+
+**EXAMPLES**
+
+```bash
+# Build index for single series in default cache
+dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82
+
+# Build multiple indices in cache directory
+dicom-series-preview build-index \
+  38902e14-b11f-4548-910e-771ee757dc82 \
+  45678abc-def0-1234-5678-90abcdef1234 \
+  --cache-dir ~/.cache/dicom-indices
+
+# Build index with verbose output
+dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
+  --cache-dir /tmp/indices -v
+
+# Build index from custom HTTP server
+dicom-series-preview build-index abc123def456 \
+  --root http://hospital.example.com/dicom \
+  --cache-dir /tmp/indices
+
+# Limit to first 100 instances (for large series)
+dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
+  --limit 100 --cache-dir ~/.cache/dicom
+```
+
+**OUTPUT FORMAT**
+
+Index files are Parquet tables with one row per DICOM instance:
+
+**Metadata Columns**
+
+- **Index** (UInt32): Zero-based sort position (0 to N-1)
+- **FileName** (Utf8): Instance filename (derived from SOPInstanceUID)
+- **SeriesUID** (Utf8): Series UID
+- **StorageRoot** (Utf8): Storage root path
+
+**Sorting Information**
+
+- **PrimaryPosition** (Float32): Actual coordinate on primary axis
+  - For spatial scans: X, Y, or Z coordinate in millimeters
+  - For instance-number-only: InstanceNumber value
+- **PrimaryAxis** (Utf8): Which axis was used for sorting
+  - `'X'` - Sagittal (left-right varies most)
+  - `'Y'` - Coronal (anterior-posterior varies most)
+  - `'Z'` - Axial (superior-inferior varies most)
+  - `'I'` - Instance number only (no spatial coordinates)
+
+**Instance Information**
+
+- **InstanceNumber** (Int32): DICOM InstanceNumber tag
+- **SOPInstanceUID** (Utf8): Unique instance identifier
+- **SliceLocation** (Float32): DICOM SliceLocation tag (if available)
+
+**Dynamic Columns**
+
+- All other DICOM header elements that vary across the series
+- Numeric types (IS, DS, US, etc.) → Int32 or Float32
+- Text types (CS, LO, PN, etc.) → Utf8
+- Binary data (OB, OW) → Two columns: `{TagName}_Size` (Int32) and `{TagName}_Hash` (Utf8)
+
+**Constant Values**
+
+DICOM elements with identical values across all instances are excluded (derivable from metadata).
+
+**BEHAVIOR**
+
+1. Captures all DICOM headers from the series
+2. Sorts instances by z-position (primary) and instance number (secondary)
+3. Exports metadata to strongly-typed Parquet format
+4. File size typically 1-5MB depending on series size and metadata
+
+**PERFORMANCE**
+
+- Typical time: 10-30 seconds per series depending on network
+- Future image commands skip header fetching when index exists (massive speedup: 2-3 seconds vs 10-30 seconds)
+
+---
+
+### get-index
+
+Retrieve or create a DICOM series index and return its path.
+
+**SYNOPSIS**
+
+```
+dicom-series-preview get-index SERIES [OPTIONS]
+```
+
+**ARGUMENTS**
+
+`SERIES`
+: DICOM Series UID
+
+**OPTIONS**
+
+`--root PATH`
+: Root path for DICOM series.
+: Default: `s3://idc-open-data`
+
+`--cache-dir DIR`
+: Directory for storing/loading index files.
+: If not specified, uses default cache location
+
+**EXAMPLES**
+
+```bash
+# Get index path (create if doesn't exist)
+dicom-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82
+
+# Get index path in custom cache directory
+dicom-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
+  --cache-dir /tmp/my-indices
+
+# Verbose output showing what's happening
+dicom-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 -v
+```
+
+**BEHAVIOR**
+
+1. Checks if index already exists in cache
+2. If found: returns the path immediately
+3. If not found: builds index (same as `build-index` command) and returns path
+4. Returns absolute path to `.parquet` file
+5. Useful for integrating into scripts or other tools
+
+**OUTPUT**
+
+Prints the full path to the index file, e.g.:
+```
+/Users/username/.cache/dicom-indices/indices/38902e14-b11f-4548-910e-771ee757dc82_index.parquet
+```
+
+---
+
+## SORTING AND INSTANCE SELECTION
+
+### Two-Level Sorting
+
+All instances are sorted using a two-level strategy:
+
+1. **Primary**: Z-position (spatial location) from `ImagePositionPatient[2]` or `SliceLocation`
+2. **Secondary**: `InstanceNumber` (for multiple instances at same z-position)
 
 This ensures:
-- Instances are arranged spatially from superior (head) to inferior (tail)
-- Multiple instances at the same spatial location (temporal sequences) are ordered by instance number
-- Both 3D static volumes and 4D temporal sequences are handled correctly
+- Instances follow radiological convention (superior → inferior)
+- Multi-instance temporal sequences are properly ordered
+- Both static 3D volumes and 4D temporal data are handled correctly
 
-### Mosaic Selection (Default --tile-width x --tile-height)
+### Position Mapping Strategy
 
-By default, the tool selects a distributed subset of instances from the full sorted sequence:
+When selecting by position (0.0-1.0), the tool uses this priority:
 
-- If the series has fewer instances than requested tiles, all instances are used
-- If the series has more instances, they are:
-  1. Sorted by z-position then instance number (see above)
-  2. Evenly distributed across the full sequence
-  3. Always includes the first and last instance in the series
+1. **Spatial variation detected**: Maps position to z-position range
+   - Example: In a 181-slice series from z=-792 to z=-488, position 0.5 selects the middle z-coordinate
 
-### Single Instance Selection (--position)
+2. **Temporal data detected**: Maps position to time range (via time tags or instance number)
+   - Example: Cardiac series with 25 timepoints; position 0.5 selects middle timepoint
 
-The `--position` parameter selects a single instance using a priority-based strategy:
-
-**Selection Priority:**
-
-1. **If z-position varies** (e.g., multi-slice CT):
-   - Maps position to z-position range
-   - `--position 0.5` selects the slice at the spatial middle
-   - Example: In a 181-slice series from z=-792 to z=-488, position 0.5 selects the slice at z≈-640
-
-2. **If temporal data exists** (e.g., cardiac, perfusion imaging):
-   - Detects multiple instances at the same spatial location
-   - Maps position to temporal range (by time or instance number)
-   - `--position 0.5` selects the image at the middle timepoint
-   - Checks for time tags: InstanceCreationTime, ContentTime, AcquisitionTime
-
-3. **Otherwise** (static single-location images):
-   - Maps position to sequence index
-   - `--position 0.5` selects the middle instance in the sorted sequence
-
-**Examples:**
-- Multi-slice CT (z-position varies): `--position 0.5` → middle slice spatially
-- Cardiac series (same location, multiple times): `--position 0.5` → middle timepoint
-- Single-location series: `--position 0.5` → middle instance by order
+3. **Default**: Maps position to instance index
+   - Example: Series with 50 instances; position 0.5 selects instance 25
 
 ### Slice Offset
 
-The `--slice-offset` parameter allows you to move up or down from the selected position by a fixed number of slices:
-
-- Only valid when `--position` is specified
-- Applied after position is calculated (after selection strategy)
-- Can be positive (forward) or negative (backward)
-- **Must stay within series bounds**: offset that goes before the first or past the last instance will cause an error
-- Useful for accessing adjacent slices without changing the base position parameter
-
-**Examples:**
-- `--position 0.5 --slice-offset 1` → One slice ahead of the middle
-- `--position 0.5 --slice-offset -1` → One slice before the middle
-- `--position 0.0 --slice-offset 5` → Fifth slice from the beginning
-- `--position 1.0 --slice-offset -3` → Third slice from the end
-
-**Error Handling:**
-If the offset would go out of bounds, the tool returns an error with the valid index range. For example:
-- `--position 0.0 --slice-offset -10` on a 181-instance series → Error: offset goes before first instance
-- `--position 1.0 --slice-offset 100` on a 181-instance series → Error: offset goes past last instance
+Applied after position mapping:
+- `--slice-offset 1` → one instance forward
+- `--slice-offset -1` → one instance backward
+- Must stay within series bounds (0 to N-1)
 
 ### Range Selection
 
-When `--start` and `--end` are specified, the selection process is modified:
+`--start` and `--end` filter by z-position range:
+- start_z = min_z + (max_z - min_z) × start
+- end_z = min_z + (max_z - min_z) × end
+- Only instances with z-position in [start_z, end_z] are selected
+- Instances are then distributed across requested tiles
 
-1. All instances are sorted by z-position as usual
-2. The min and max z-values are identified
-3. The normalized range is mapped to actual z-values:
-   - start_z = min_z + (max_z - min_z) × start
-   - end_z = min_z + (max_z - min_z) × end
-4. Only instances with z-position between start_z and end_z (inclusive) are selected
-5. From the filtered set, instances are distributed as usual
-6. If fewer instances are found than tiles requested, all are used (no duplicates)
-7. Remaining tiles are filled with blank/black images
+---
 
-**Note:** Range values are normalized (0.0-1.0) to be independent of actual z-positions, making ranges portable across different series.
+## CONTRAST SETTINGS
 
-### Contrast/Window Settings
+Contrast is determined in this priority order:
 
-Contrast settings are determined in this priority order:
+1. **Command-line**: `--contrast` argument (highest priority)
+2. **DICOM file**: WindowWidth/WindowCenter in header (if available)
+3. **Auto-detection**: Calculated from pixel statistics (2nd-98th percentile)
 
-1. **Command-line arguments** - `--contrast-preset`, `--window-width`/`--window-center`
-2. **File metadata** - WindowWidth/WindowCenter stored in DICOM headers
-3. **Auto-detection** - Calculated from image statistics (2nd to 98th percentile)
+### Windowing Algorithm
 
-### Instance Retrieval
+Linear windowing with hard clipping:
+- Values < (center - width/2) → black (0)
+- Values > (center + width/2) → white (255)
+- Values in between → linearly interpolated
 
-The tool uses a two-pass retrieval strategy for efficiency:
+### Common Presets
 
-- **First pass**: Retrieve headers (5KB) for all instances in parallel to determine z-positions
-- **Second pass**: Fetch full pixel data only for selected instances
+| Preset | Window | Center | Use Case |
+|--------|--------|--------|----------|
+| `ct-lung` | 1500 | -500 | Pulmonary imaging |
+| `ct-bone` | 2000 | 300 | Bone, dental |
+| `ct-brain` | 80 | 40 | Brain, stroke |
+| `ct-abdomen` | 350 | 50 | Abdominal organs |
+| `ct-liver` | 150 | 30 | Liver imaging |
+| `ct-mediastinum` | 350 | 50 | Mediastinal structures |
+| `ct-soft-tissue` | 400 | 50 | Soft tissue, muscles |
 
-This reduces S3 bandwidth for large series while ensuring all metadata needed for proper sorting is available.
+---
 
-### Windowing
+## CACHING SYSTEM
 
-Linear windowing with hard clipping is applied:
-- Values below (center - width/2) are mapped to black (0)
-- Values above (center + width/2) are mapped to white (255)
-- Values in between are linearly scaled
+### Automatic Caching
 
-## ERROR HANDLING
+By default, DICOM series indices are cached after first access:
 
-The tool will exit with error code 1 if:
+1. After retrieving headers, index is saved to cache directory
+2. On subsequent runs, index is loaded from cache (no header fetching)
+3. **Performance impact**: Typical 2-3 second cached vs 10-30 second fresh
 
-- Series UID is invalid or not found
-- Output file format is not .webp or .jpg/.jpeg
-- No valid images can be retrieved from the series
-- DICOM files use unsupported compression codecs (e.g., JPEG Extended with 12-bit precision)
+### Cache Location
 
-On error, detailed messages are logged to help diagnose the issue. Use `-v/--verbose` for debug information.
+Default locations (in order of preference):
+1. `DICOM_SERIES_PREVIEW_CACHE_DIR` environment variable
+2. Platform-specific cache directory:
+   - Linux: `~/.cache/dicom-series-preview`
+   - macOS: `~/Library/Caches/dicom-series-preview`
+   - Windows: `%APPDATA%\dicom-series-preview\cache`
 
-## BUILD-INDEX COMMAND
+### Disabling Cache
 
-The `build-index` subcommand extracts DICOM headers from all instances in a series and exports them to Parquet format as a cached index for fast access.
-
-### SYNOPSIS
-
-```
-dicom-series-preview build-index [OPTIONS] SERIESUID OUTPUT
-```
-
-### ARGUMENTS
-
-#### SERIESUID
-The DICOM Series UID. Same format options as the main command:
-- Full 32-character hex UID: `38902e14b11f4548910e771ee757dc82`
-- Standard UUID format: `38902e14-b11f-4548-910e-771ee757dc82`
-- Partial prefix with wildcard: `38902e14*`
-
-#### OUTPUT
-Output Parquet file path. Must have a `.parquet` extension.
-
-### OPTIONS
-
-`--root PATH`
-: Root path for DICOM files (S3, HTTP, or local filesystem).
-: Default: `s3://idc-open-data`
-
-`--limit INT`
-: Limit the number of instances to process (useful for large series).
-
-`-v, --verbose`
-: Enable verbose logging output.
-
-### OUTPUT FORMAT
-
-The Parquet file contains one row per DICOM instance with the following columns:
-
-#### Metadata Columns
-- **Index** (UInt32): Zero-based sort index (0 to n-1) showing instance order
-- **FileName** (Utf8): Instance filename (derived from SOPInstanceUID)
-- **SeriesUID** (Utf8): Series UID (constant for all rows)
-- **StorageRoot** (Utf8): Storage root path (constant for all rows)
-
-#### Sorting Information
-- **PrimaryPosition** (Float32): The actual coordinate value on the primary axis
-  - For spatial scans (axial/sagittal/coronal): the X, Y, or Z position in mm
-  - For InstanceNumber-only scans: the InstanceNumber value
-  - Examples: -792.5, -791.5, -488.5 for an axial CT series
-- **PrimaryAxis** (Utf8): Single-character label indicating which axis/method was used for sorting
-  - `'X'` - Sagittal orientation (X-axis varies most)
-  - `'Y'` - Coronal orientation (Y-axis varies most)
-  - `'Z'` - Axial orientation (Z-axis varies most)
-  - `'I'` - Instance number (no spatial position available)
-
-#### Instance Information
-- **InstanceNumber** (Int32): DICOM InstanceNumber tag
-- **SOPInstanceUID** (Utf8): DICOM SOPInstanceUID (unique per instance)
-- **SliceLocation** (Float32): DICOM SliceLocation tag (if available)
-
-#### Other Varying Headers
-All other DICOM header elements that vary across the series are included as typed columns:
-- Numeric tags (IS, DS, US, etc.) → Int32/Float32
-- Text tags (CS, LO, PN, etc.) → Utf8
-- Binary data (OB, OW) → Two columns: `TagName_Size` (Int32) and `TagName_Hash` (Utf8)
-
-#### Constant Headers
-DICOM elements with the same value across all instances are excluded to reduce file size (they can be determined from the metadata).
-
-### EXAMPLES
-
-#### Basic index build
-```
-build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet
+Use `--no-cache` flag to fetch fresh on every run:
+```bash
+dicom-series-preview mosaic SERIES OUTPUT --no-cache
 ```
 
-#### Build index with verbose output
-```
-build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet -v
-```
+### Custom Cache Directory
 
-#### Limit to first 50 instances (for large series)
-```
-build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet --limit 50
+Use `--cache-dir` to specify alternative location:
+```bash
+dicom-series-preview mosaic SERIES OUTPUT --cache-dir /tmp/my-indices
 ```
 
-#### From local filesystem
-```
-build-index d94176e6-bc8e-4666-b143-639754258d06 series.index.parquet \
-  --root /local/dicom/path
-```
+---
 
-### NOTES
+## STORAGE BACKENDS
 
-#### Sorting
-Instances are automatically sorted by the centralized slice sorting logic:
-1. **Detect dominant axis**: Finds which spatial axis (X, Y, Z) has the largest range
-2. **Apply radiological order**: Standard medical viewing convention (superior→inferior, right→left, anterior→posterior)
-3. **Secondary sort**: Instances at the same spatial location are ordered by InstanceNumber
+### S3 (Default)
 
-#### File Format Benefits
-- **Strongly-typed columns**: Each column has an appropriate Parars data type, enabling efficient compression and analysis
-- **Compact representation**: Run-length encoding for constant values, columnar compression
-- **Self-documenting**: PrimaryAxis column explicitly indicates which axis/method was used for sorting
-- **Analyzable**: Parquet format is supported by Pandas, Polars, DuckDB, and other data analysis tools
+Accesses public IDC bucket by default:
+```bash
+# Uses s3://idc-open-data by default
+dicom-series-preview mosaic SERIES output.webp
 
-#### Index Column
-The **Index** column (0 to n-1) tracks the sorted position of each instance. This is useful for:
-- Understanding the sort order of the series
-- Creating queries like "give me instances 100-150" → rows with Index in that range
-- Correlating back to spatial position via PrimaryPosition column
-
-## COMPRESSION CODEC SUPPORT
-
-Currently supported DICOM compression codecs:
-- Uncompressed (no compression)
-- JPEG Baseline
-- JPEG Lossless (non-hierarchical)
-- RLE (Run-Length Encoding)
-
-Unsupported codecs (without gdcm):
-- JPEG Extended (with 12-bit precision)
-- JPEG 2000
-
-To support additional codecs, install the optional `gdcm` dependency (available on Linux/Windows):
-```
-pip install dicom-series-preview[gdcm]
+# Use private bucket with credentials
+dicom-series-preview mosaic SERIES output.webp \
+  --root s3://my-private-bucket
 ```
 
-## INSTALLATION
-
-Using uv (recommended):
-```
-uv pip install .
-uv run dicom-series-preview --help
-```
-
-Using pip:
-```
-pip install .
-dicom-series-preview --help
-```
-
-## ENVIRONMENT
-
-The tool respects standard environment variables for S3 access when using credentials (though the default IDC S3 bucket is public):
-
+Environment variables (if credentials needed):
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_REGION`
 
+### HTTP
+
+Accesses DICOM files via HTTP:
+```bash
+dicom-series-preview mosaic SERIES output.webp \
+  --root http://hospital.example.com/dicom-server
+```
+
+### Local Filesystem
+
+Uses local DICOM files:
+```bash
+dicom-series-preview mosaic SERIES output.webp \
+  --root /data/dicom
+
+# Or with file:// prefix
+dicom-series-preview mosaic SERIES output.webp \
+  --root file:///data/dicom
+```
+
+---
+
+## COMPRESSION CODEC SUPPORT
+
+**Supported (always)**
+- Uncompressed
+- JPEG Baseline
+- JPEG Lossless (non-hierarchical)
+- RLE (Run-Length Encoding)
+
+**Unsupported without additional libraries**
+- JPEG Extended (12-bit)
+- JPEG 2000
+- MPEG
+
+To support these, install optional gdcm dependency (Linux/Windows only):
+```bash
+pip install dicom-series-preview[gdcm]
+```
+
+---
+
+## ERROR HANDLING
+
+The tool exits with code 1 on errors:
+
+**Common errors:**
+- Invalid series UID format
+- Series not found in storage
+- Invalid output file extension (must be `.webp`, `.jpg`, `.jpeg`)
+- Unsupported compression codec
+- Network errors fetching DICOM files
+- Invalid position/range parameters (must be 0.0-1.0)
+- Slice offset out of bounds
+
+**Troubleshooting:**
+
+Use `--verbose/-v` for detailed error messages:
+```bash
+dicom-series-preview mosaic SERIES output.webp -v
+```
+
+---
+
 ## EXIT STATUS
 
 - `0` - Success
-- `1` - Error (invalid arguments, file not found, processing error, etc.)
+- `1` - Error (invalid arguments, not found, processing failure, etc.)
 
-## NOTES
+---
 
-### Performance
+## ENVIRONMENT
 
-- Typical mosaic generation takes 5-10 seconds depending on network latency and series size
-- Bandwidth usage: 5-10MB for header retrieval + pixel data for selected instances
-- Use smaller `--image-width` and `--tile-width` values for faster processing
+`DICOM_SERIES_PREVIEW_CACHE_DIR`
+: Override default cache directory for indices
+
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+: AWS credentials for private S3 buckets (IDC bucket is public)
+
+---
+
+## PERFORMANCE NOTES
+
+### Typical Timings
+
+- **First run** (no cache): 10-30 seconds (headers must be fetched)
+- **Cached run**: 2-3 seconds (headers already cached)
+- **Network latency**: Dominant factor, varies by location/bandwidth
+
+### Bandwidth Usage
+
+- **Header retrieval**: ~5KB per instance × number of instances
+- **Pixel data**: Depends on tile count and image size
+- **Total**: Typically 5-50MB depending on series size
+
+### Optimization Tips
+
+- Use `--cache-dir` to reuse indices across multiple commands
+- Use `--image-width 64-128` for faster preview operations
+- Use `--tile-width/height` appropriate for use case (don't request huge grids)
+- Smaller `--quality` values (20-30) for fast preview, larger (50+) for archival
 
 ### Quality Settings
 
-- WebP quality 20-30: Good balance of quality and file size (~1-5KB per tile)
-- WebP quality 50+: High quality (~5-20KB per tile)
-- JPEG quality 70+: Good quality, larger files (~10-30KB per tile)
+| Format | Quality | Size/Tile | Use Case |
+|--------|---------|-----------|----------|
+| WebP | 20-30 | 1-5KB | Fast preview |
+| WebP | 50+ | 5-20KB | Good quality |
+| JPEG | 70+ | 10-30KB | High quality |
+| JPEG | 85+ | 20-50KB | Archive |
 
-### Z-Position Sorting
+---
 
-Medical imaging convention is to display slices in radiological order (superior to inferior). The tool automatically sorts instances by their spatial location and ensures consistent display order.
+## INSTALLATION
+
+### Using uv (Recommended)
+
+```bash
+uv pip install .
+uv run dicom-series-preview --help
+```
+
+### Using pip
+
+```bash
+pip install .
+dicom-series-preview --help
+```
+
+### Optional Dependencies
+
+For additional DICOM codec support:
+```bash
+pip install dicom-series-preview[gdcm]
+```
+
+---
+
+## EXAMPLES
+
+### Quick Preview
+
+```bash
+# Default 6x6 mosaic
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 preview.webp
+```
+
+### Detailed Analysis
+
+```bash
+# Compare contrasts at specific location
+dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 analysis.webp \
+  --position 0.5 \
+  --contrast lung --contrast bone --contrast brain --contrast soft
+
+# View multiple slices in one image
+dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 multi_slice.webp \
+  --tile-width 4 --tile-height 4 --image-width 192 \
+  --start 0.3 --end 0.7
+```
+
+### Automated Processing
+
+```bash
+# Build cache first
+dicom-series-preview build-index SERIES1 SERIES2 --cache-dir /cache
+
+# Later: fast processing from cache
+dicom-series-preview mosaic SERIES1 output1.webp --cache-dir /cache
+dicom-series-preview mosaic SERIES2 output2.webp --cache-dir /cache
+```
+
+### Integration with Scripts
+
+```bash
+#!/bin/bash
+# Get index and pass to external tool
+INDEX=$(dicom-series-preview get-index $SERIES --cache-dir /cache)
+python analyze_dicom.py --index "$INDEX"
+```
+
+---
+
+## NOTES
+
+### Series UID Format
+
+Standard DICOM Series UID format is a 32-character hexadecimal string (UUID):
+```
+38902e14-b11f-4548-910e-771ee757dc82  (with hyphens)
+38902e14b11f4548910e771ee757dc82      (without hyphens)
+```
+
+Both formats are accepted and normalized automatically.
+
+### Radiological Convention
+
+Images are displayed in standard radiological order:
+- Axial: superior (head) → inferior (feet)
+- Coronal: posterior → anterior
+- Sagittal: right → left
+
+This matches medical imaging conventions and is determined automatically from spatial metadata.
+
+### Parquet Index Format
+
+Index files are stored in Apache Parquet format:
+- Strongly-typed columns (efficient storage)
+- Supports columnar compression
+- Compatible with: Pandas, Polars, DuckDB, Arrow, PySpark
+- Self-documenting schema
+
+---
+
+## SEE ALSO
+
+- DICOM Standard: ISO/IEC 23912
+- pydicom documentation: https://pydicom.readthedocs.io/
+- Imaging Data Commons: https://imagingdatacommons.cancer.gov/
+
+---
+
+## HISTORY
+
+**Version 0.1.0** (current)
+- Five commands: mosaic, get-image, contrast-mosaic, build-index, get-index
+- S3, HTTP, and local filesystem support
+- Caching system with Parquet indices
+- Multiple contrast presets and custom windowing
+- Prefix-based series search
+
+---
 
 ## AUTHOR
 
 Generated with Claude Code
 
-## SEE ALSO
+## BUGS
 
-For more information about DICOM file format, see the DICOM standard (ISO/IEC 23912).
-For pydicom documentation, visit https://pydicom.readthedocs.io/
+Report issues at: https://github.com/anthropics/claude-code/issues

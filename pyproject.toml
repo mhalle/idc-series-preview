@@ -66,4 +66,4 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=src --cov-report=term-only"
+addopts = "--cov=src --cov-report=term"

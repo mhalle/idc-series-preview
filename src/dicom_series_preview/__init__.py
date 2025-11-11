@@ -7,7 +7,7 @@ from .contrast import ContrastPresets
 from .header_capture import HeaderCapture
 from .slice_sorting import sort_slices, SliceParameterization
 from .index_cache import IndexCache
-from .api import SeriesIndex
+from .api import SeriesIndex, Contrast, Instance
 
 __version__ = "0.1.0"
 __all__ = [
@@ -23,4 +23,6 @@ __all__ = [
     "SliceParameterization",
     "IndexCache",
     "SeriesIndex",
+    "Contrast",
+    "Instance",
 ]

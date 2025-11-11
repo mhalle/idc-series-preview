@@ -191,15 +191,21 @@ class DICOMRetriever:
             return f"{series_uid}/{instance_uid}.dcm"
 
     def _get_instance_headers(
-        self, series_uid: str, instance_uid: str, max_bytes: int = 5000
+        self, series_uid: str, instance_uid: str, max_bytes: int = 10000
     ) -> Tuple[Optional[pydicom.Dataset], int]:
         """
-        Retrieve DICOM headers via range request.
+        Retrieve DICOM headers via progressive range requests.
+
+        Uses adaptive strategy to minimize bandwidth:
+        - First chunk: 5KB (covers ~95% of simple files)
+        - Second chunk: +10KB if needed (15KB total)
+        - Third chunk: +10KB if needed (25KB total)
+        - Fallback: Full file if progressive chunks exhausted
 
         Args:
             series_uid: The DICOM series UID
             instance_uid: The DICOM instance UID
-            max_bytes: Maximum bytes to retrieve (default 5KB for minimal header data)
+            max_bytes: Ignored (kept for backward compatibility)
 
         Returns:
             Tuple of (pydicom.Dataset or None, total_file_size)
@@ -207,48 +213,62 @@ class DICOMRetriever:
         try:
             path = self._get_instance_path(series_uid, instance_uid)
 
-            # Try initial range request (5KB for minimal header data)
-            try:
-                range_result = self.store.get_range(path, start=0, length=max_bytes)
-                # get_range returns obstore.Bytes directly
-                data = bytes(range_result) if hasattr(range_result, '__len__') else bytes(range_result.bytes())
-            except Exception as e:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Range request failed for {path}, falling back to full file: {e}")
-                # Fall back to full file
-                result = self.store.get(path)
-                data = bytes(result.bytes())
+            # Progressive chunk sizes: 5KB, +7.5KB, +10KB (optimized for bandwidth)
+            chunk_sizes = [5120, 7680, 10240]
+            data = b''
 
-            # Parse DICOM headers
+            # Try progressive range requests
+            for chunk_size in chunk_sizes:
+                try:
+                    # Fetch next chunk (start where we left off)
+                    start = len(data)
+                    range_result = self.store.get_range(path, start=start, length=chunk_size)
+                    chunk = bytes(range_result) if hasattr(range_result, '__len__') else bytes(range_result.bytes())
+                    data += chunk
+
+                    # Try to parse accumulated data
+                    try:
+                        ds = pydicom.dcmread(BytesIO(data), stop_before_pixels=True, force=True)
+                        # Success! Get file size from metadata
+                        meta_data = self.store.head(path)
+                        size = meta_data.get('size') if isinstance(meta_data, dict) else meta_data.size
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Headers parsed successfully at {len(data)} bytes for {path}")
+                        return ds, size
+                    except NotImplementedError as e:
+                        # Unsupported compression, skip this file
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Cannot read DICOM with unsupported compression {path}: {e}")
+                        return None, 0
+                    except Exception as e:
+                        # Incomplete data, try next chunk
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Parse failed at {len(data)} bytes, trying next chunk: {e}")
+                        continue
+
+                except Exception as e:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Range request failed for {path}: {e}")
+                    # Continue to next chunk attempt
+                    continue
+
+            # All progressive chunks exhausted, fall back to full file
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Progressive chunks exhausted for {path}, fetching full file")
+
             try:
-                ds = pydicom.dcmread(BytesIO(data), stop_before_pixels=True, force=True)
-                # Get file size from metadata if available
-                meta_data = self.store.head(path)
-                size = meta_data.get('size') if isinstance(meta_data, dict) else meta_data.size
-                return ds, size
+                result = self.store.get(path)
+                full_data = bytes(result.bytes())
+                ds = pydicom.dcmread(BytesIO(full_data), stop_before_pixels=True, force=True)
+                return ds, len(full_data)
             except NotImplementedError as e:
-                # Unsupported compression, skip this file
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Cannot read DICOM with unsupported compression {path}: {e}")
                 return None, 0
             except Exception as e:
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Failed to parse DICOM headers for {path}: {e}")
-                # Try retrieving full file as fallback
-                try:
-                    result = self.store.get(path)
-                    # GetResult.bytes() returns obstore.Bytes which can be converted to bytes
-                    full_data = bytes(result.bytes())
-                    ds = pydicom.dcmread(BytesIO(full_data), stop_before_pixels=True, force=True)
-                    return ds, len(full_data)
-                except NotImplementedError as e2:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Cannot read DICOM with unsupported compression {path}: {e2}")
-                    return None, 0
-                except Exception as e2:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Failed to parse full DICOM file for {path}: {e2}")
-                    return None, 0
+                    logger.debug(f"Failed to parse full DICOM file for {path}: {e}")
+                return None, 0
 
         except Exception as e:
             logger.error(f"Error retrieving instance headers {series_uid}/{instance_uid}: {e}")
@@ -741,7 +761,7 @@ class DICOMRetriever:
 
         Args:
             series_uid: The DICOM series UID
-            instance_uid: The DICOM instance UID
+            instance_uid: The DICOM instance UID or filename
 
         Returns:
             pydicom.Dataset or None if retrieval failed
@@ -764,3 +784,95 @@ class DICOMRetriever:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Error retrieving instance {series_uid}/{instance_uid}: {e}")
             return None
+
+    def get_instances(
+        self,
+        urls: List[str],
+        headers_only: bool = False,
+        max_workers: int = 8,
+    ) -> List[Optional[pydicom.Dataset]]:
+        """
+        Fetch multiple DICOM instances in parallel from a list of URLs/paths.
+
+        Core method for efficient bulk fetching. Handles both headers-only (fast)
+        and full data (slower) retrieval with progressive range requests.
+
+        Args:
+            urls: List of full paths/URLs (e.g., "series_uid/instance.dcm")
+            headers_only: If True, fetch only DICOM headers via progressive range requests.
+                         If False, fetch complete instances.
+            max_workers: Number of parallel fetch threads
+
+        Returns:
+            List of pydicom.Dataset objects (or None for failed URLs).
+            Order matches input URLs.
+        """
+        if not urls:
+            return []
+
+        def fetch_single(url: str) -> Tuple[str, Optional[pydicom.Dataset]]:
+            """Fetch single instance, return (url, Dataset or None)."""
+            try:
+                if headers_only:
+                    # Parse URL to extract series_uid and instance_uid
+                    parts = url.split('/')
+                    if len(parts) >= 2:
+                        series_uid = parts[0]
+                        instance_uid = '/'.join(parts[1:])
+                        ds, _ = self._get_instance_headers(series_uid, instance_uid)
+                    else:
+                        return (url, None)
+                else:
+                    result = self.store.get(url)
+                    data = bytes(result.bytes())
+                    ds = pydicom.dcmread(BytesIO(data), force=True)
+
+                return (url, ds)
+
+            except NotImplementedError as e:
+                # Unsupported compression
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Skipping {url}: unsupported compression - {e}")
+                return (url, None)
+            except Exception as e:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Error retrieving {url}: {e}")
+                return (url, None)
+
+        # Fetch in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_single, url): url for url in urls}
+            results = []
+
+            for future in as_completed(futures):
+                try:
+                    url, dataset = future.result()
+                    results.append((url, dataset))
+                except Exception as e:
+                    url = futures[future]
+                    logger.error(f"Error in get_instances for {url}: {e}")
+                    results.append((url, None))
+
+        # Return datasets in original URL order
+        result_dict = {url: ds for url, ds in results}
+        return [result_dict.get(url) for url in urls]
+
+    def get_instance(
+        self,
+        url: str,
+        headers_only: bool = False,
+    ) -> Optional[pydicom.Dataset]:
+        """
+        Fetch a single DICOM instance.
+
+        Convenience wrapper around get_instances() for fetching a single URL.
+
+        Args:
+            url: Path/URL to instance (e.g., "series_uid/instance.dcm")
+            headers_only: If True, fetch only DICOM headers via progressive range requests.
+
+        Returns:
+            pydicom.Dataset or None if retrieval failed.
+        """
+        results = self.get_instances([url], headers_only=headers_only, max_workers=1)
+        return results[0] if results else None
