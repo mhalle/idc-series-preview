@@ -11,9 +11,85 @@ from PIL import Image
 from .__main__ import _parse_and_normalize_series
 from .index_cache import load_or_generate_index
 from .retriever import DICOMRetriever
-from .mosaic import MosaicGenerator
+from .image_utils import MosaicGenerator
 
 logger = logging.getLogger(__name__)
+
+
+class PositionInterpolator:
+    """Generate evenly-spaced positions across a normalized range.
+
+    Useful for sampling DICOM series at regular intervals or creating
+    grid layouts (mosaic, contrast grids, etc.).
+
+    Examples
+    --------
+    >>> interp = PositionInterpolator(instance_count=100)
+    >>> positions = interp.interpolate(num_positions=6)  # 6 evenly-spaced positions
+    >>> positions = interp.interpolate(num_positions=6, start=0.3, end=0.7)  # middle 40%
+    """
+
+    def __init__(self, instance_count: int):
+        """
+        Initialize interpolator for a series with given instance count.
+
+        Parameters
+        ----------
+        instance_count : int
+            Number of instances in the series
+        """
+        if instance_count < 1:
+            raise ValueError(f"instance_count must be >= 1, got {instance_count}")
+        self.instance_count = instance_count
+
+    def interpolate(
+        self,
+        num_positions: int,
+        start: float = 0.0,
+        end: float = 1.0,
+    ) -> list[float]:
+        """
+        Generate evenly-spaced positions within a normalized range.
+
+        Parameters
+        ----------
+        num_positions : int
+            Number of positions to generate
+        start : float, default 0.0
+            Start of normalized range (0.0-1.0)
+        end : float, default 1.0
+            End of normalized range (0.0-1.0)
+
+        Returns
+        -------
+        list[float]
+            Evenly-spaced positions in [start, end]
+
+        Raises
+        ------
+        ValueError
+            If num_positions < 1 or range invalid
+        """
+        if num_positions < 1:
+            raise ValueError(f"num_positions must be >= 1, got {num_positions}")
+        if not (0.0 <= start <= 1.0):
+            raise ValueError(f"start must be in [0.0, 1.0], got {start}")
+        if not (0.0 <= end <= 1.0):
+            raise ValueError(f"end must be in [0.0, 1.0], got {end}")
+        if start > end:
+            raise ValueError(f"start must be <= end, got start={start}, end={end}")
+
+        # Single position: return midpoint of range
+        if num_positions == 1:
+            return [(start + end) / 2.0]
+
+        # Multiple positions: evenly-spaced across range
+        positions = []
+        for i in range(num_positions):
+            pos = start + (end - start) * i / (num_positions - 1)
+            positions.append(pos)
+
+        return positions
 
 
 class Contrast:

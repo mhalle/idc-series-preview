@@ -14,10 +14,10 @@ from typing import Optional
 
 import polars as pl
 
-from .retriever import DICOMRetriever
-from .mosaic import MosaicGenerator
+from .image_utils import MosaicGenerator, save_image
 from .contrast import ContrastPresets
 from .index_cache import _generate_parquet_table, load_or_generate_index, get_cache_directory
+from .retriever import DICOMRetriever
 
 
 def parse_series_specification(
@@ -435,11 +435,7 @@ def _get_window_settings_from_args(args):
 def mosaic_command(args, logger):
     """Generate a tiled mosaic from a DICOM series."""
     try:
-        # Parse and normalize series specification
-        result = _parse_and_normalize_series(args.seriesuid, args.root, logger)
-        if result is None:
-            return 1
-        root_path, series_uid = result
+        from .api import SeriesIndex, PositionInterpolator
 
         # Validate output format
         output_path = Path(args.output)
@@ -466,57 +462,80 @@ def mosaic_command(args, logger):
 
         if args.verbose:
             logger.info(f"Generating DICOM series mosaic")
-            logger.info(f"Series UID: {series_uid}")
-            logger.info(f"Root: {root_path}")
+            logger.info(f"Series UID: {args.seriesuid}")
+            logger.info(f"Root: {args.root}")
             logger.info(f"Tile grid: {args.tile_width}x{tile_height}")
             logger.info(f"Tile width: {args.image_width}px")
             if args.start > 0.0 or args.end < 1.0:
                 logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
 
-        # Initialize retriever with optional cache support
-        retriever = _initialize_retriever_with_cache(root_path, series_uid, args, logger)
-
-        # Retrieve DICOM instances
-        if args.verbose:
-            logger.info("Retrieving DICOM instances...")
-        instances = retriever.get_instances_distributed(
-            series_uid,
-            args.tile_width * tile_height,
-            start=args.start,
-            end=args.end
-        )
-
-        if not instances:
-            logger.error(f"No DICOM instances found for series {series_uid}")
+        # Create SeriesIndex with optional cache support
+        try:
+            use_cache = not getattr(args, 'no_cache', False)
+            cache_dir = getattr(args, 'cache_dir', None)
+            series_index = SeriesIndex(
+                args.seriesuid,
+                root=args.root,
+                cache_dir=cache_dir,
+                use_cache=use_cache,
+            )
+        except ValueError as e:
+            logger.error(f"Failed to initialize series index: {e}")
             return 1
 
         if args.verbose:
-            logger.info(f"Retrieved {len(instances)} instances")
+            logger.info(f"Series has {series_index.instance_count} instances")
 
-        # Generate mosaic
+        # Generate evenly-spaced positions for the mosaic
+        num_images = args.tile_width * tile_height
+        interp = PositionInterpolator(series_index.instance_count)
+        positions = interp.interpolate(num_images, start=args.start, end=args.end)
+
+        # Retrieve and render images
         if args.verbose:
-            logger.info("Generating mosaic...")
+            logger.info(f"Retrieving and rendering {len(positions)} images...")
+        try:
+            images = series_index.get_images(
+                positions=positions,
+                contrast=window_settings,
+                max_workers=8,
+            )
+        except ValueError as e:
+            logger.error(f"Failed to retrieve images: {e}")
+            return 1
+
+        if not images:
+            logger.error(f"No images retrieved for series")
+            return 1
+
+        if args.verbose:
+            logger.info(f"Retrieved {len(images)} images")
+
+        # Tile the images into mosaic
+        if args.verbose:
+            logger.info("Tiling images into mosaic...")
         generator = MosaicGenerator(
             tile_width=args.tile_width,
             tile_height=tile_height,
             image_width=args.image_width,
-            window_settings=window_settings
         )
 
-        output_image = generator.create_mosaic(instances, retriever, series_uid)
+        output_image = generator.tile_images(images)
 
         if not output_image:
-            logger.error("Failed to generate mosaic")
+            logger.error("Failed to tile images")
             return 1
 
         # Save output
         if args.verbose:
             logger.info(f"Saving mosaic to {args.output}...")
-        generator.save_image(
+        if not save_image(
             output_image,
             args.output,
             quality=args.quality
-        )
+        ):
+            logger.error("Failed to save mosaic")
+            return 1
 
         if args.verbose:
             logger.info("Done!")
@@ -599,11 +618,13 @@ def image_command(args, logger):
         # Save output
         if args.verbose:
             logger.info(f"Saving image to {args.output}...")
-        generator.save_image(
+        if not save_image(
             output_image,
             args.output,
             quality=args.quality
-        )
+        ):
+            logger.error("Failed to save image")
+            return 1
 
         if args.verbose:
             logger.info("Done!")
@@ -795,11 +816,13 @@ def contrast_mosaic_command(args, logger):
         # Save output
         if args.verbose:
             logger.info(f"Saving contrast grid to {args.output}...")
-        generator.save_image(
+        if not save_image(
             output_image,
             args.output,
             quality=args.quality
-        )
+        ):
+            logger.error("Failed to save contrast grid")
+            return 1
 
         if args.verbose:
             logger.info("Done!")

@@ -1,11 +1,11 @@
-"""DICOM mosaic creation and image output."""
+"""Utility functions for image handling and output."""
 
 import logging
-from typing import List, Tuple, Optional, Union, Dict, Any
+from pathlib import Path
+from typing import List, Tuple, Optional, Union, Dict
 import numpy as np
 from PIL import Image
 import pydicom
-from pathlib import Path
 
 from .contrast import ContrastPresets
 
@@ -13,8 +13,54 @@ from .contrast import ContrastPresets
 logger = logging.getLogger(__name__)
 
 
+def save_image(
+    image: Image.Image,
+    output_path: str,
+    quality: int = 85,
+) -> bool:
+    """
+    Save PIL Image to file with quality settings.
+
+    Supports WebP and JPEG output formats.
+
+    Parameters
+    ----------
+    image : PIL.Image.Image
+        Image to save
+    output_path : str
+        Output file path (.webp or .jpg/.jpeg)
+    quality : int, default 85
+        Quality (0-100)
+
+    Returns
+    -------
+    bool
+        True if successful, False otherwise
+    """
+    try:
+        output_path = Path(output_path)
+        suffix = output_path.suffix.lower()
+
+        if suffix == '.webp':
+            image.save(output_path, 'WEBP', quality=quality)
+        elif suffix in ['.jpg', '.jpeg']:
+            image.save(output_path, 'JPEG', quality=quality)
+        else:
+            logger.error(f"Unsupported format: {suffix}")
+            return False
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Saved image to {output_path}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to save image: {e}")
+        return False
+
+
 class MosaicGenerator:
-    """Generate DICOM mosaics from a collection of instances."""
+    """Generate mosaics from a collection of images."""
 
     def __init__(
         self,
@@ -424,40 +470,3 @@ class MosaicGenerator:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Created {self.tile_width}x{self.tile_height} mosaic ({mosaic_width}x{mosaic_height}px)")
         return mosaic
-
-    def save_image(
-        self,
-        image: Image.Image,
-        output_path: str,
-        quality: int = 85,
-    ) -> bool:
-        """
-        Save mosaic image to file.
-
-        Args:
-            image: PIL Image
-            output_path: Output file path (.webp or .jpg)
-            quality: Quality (0-100)
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            output_path = Path(output_path)
-            suffix = output_path.suffix.lower()
-
-            if suffix == '.webp':
-                image.save(output_path, 'WEBP', quality=quality)
-            elif suffix in ['.jpg', '.jpeg']:
-                image.save(output_path, 'JPEG', quality=quality)
-            else:
-                logger.error(f"Unsupported format: {suffix}")
-                return False
-
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Saved mosaic to {output_path}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to save image: {e}")
-            return False
