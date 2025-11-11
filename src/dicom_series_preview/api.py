@@ -676,7 +676,7 @@ class SeriesIndex:
         """
         Render multiple images at specified positions or slice numbers.
 
-        Convenience wrapper: fetches instances and renders them in parallel.
+        Convenience wrapper: fetches instances in parallel, then renders them sequentially.
         Equivalent to: instances = index.get_instances(...); [inst.get_image(...) for inst in instances]
 
         Parameters
@@ -696,7 +696,7 @@ class SeriesIndex:
             Width of each output image in pixels
 
         max_workers : int, default 8
-            Maximum number of parallel rendering threads
+            Maximum number of parallel fetch threads (rendering is sequential)
 
         remove_duplicates : bool, default False
             If True, removes duplicate positions/slice_numbers, keeping only
@@ -714,7 +714,7 @@ class SeriesIndex:
             If both/neither positions and slice_numbers specified,
             or if any position/slice is invalid.
         """
-        # Fetch instances (handles validation, deduplication, and parallel fetching)
+        # Fetch instances in parallel (handles validation and deduplication)
         instances = self.get_instances(
             positions=positions,
             slice_numbers=slice_numbers,
@@ -723,31 +723,17 @@ class SeriesIndex:
             headers_only=False,  # Need full data for rendering
         )
 
-        # Render instances in parallel
-        def render_image(instance: Instance) -> Image.Image:
-            """Render single instance."""
+        # Render instances sequentially (rendering is CPU-bound, not I/O-bound)
+        images = []
+        for instance in instances:
             try:
-                return instance.get_image(contrast=contrast, image_width=image_width)
+                image = instance.get_image(contrast=contrast, image_width=image_width)
+                images.append(image)
             except Exception as e:
                 logger.warning(f"Failed to render image for {instance.instance_uid}: {e}")
                 raise
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(render_image, inst): i for i, inst in enumerate(instances)}
-
-            rendered = {}
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    rendered[idx] = future.result()
-                except Exception as e:
-                    logger.warning(f"Failed to render image at index {idx}: {e}")
-
-        if not rendered:
-            raise ValueError(f"Failed to render any images from {len(instances)} instances")
-
-        # Return images in original instance order
-        return [rendered[i] for i in range(len(instances)) if i in rendered]
+        return images
 
     def __repr__(self) -> str:
         """String representation."""
