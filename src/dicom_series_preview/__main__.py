@@ -17,6 +17,7 @@ from .index_cache import _generate_parquet_table, get_cache_directory
 from .retriever import DICOMRetriever
 from .series_spec import parse_and_normalize_series
 from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_MOSAIC_TILE_SIZE, DEFAULT_IMAGE_QUALITY
+from .workers import optimal_workers
 
 
 def setup_logging(verbose=False):
@@ -291,11 +292,18 @@ def mosaic_command(args, logger):
         # Retrieve and render images
         if args.verbose:
             logger.info(f"Retrieving and rendering {len(positions)} images...")
+
+        # Optimize worker count for this mosaic size (min 5, max 10)
+        mosaic_workers = optimal_workers(num_images, max_workers=10, min_workers=5)
+        if args.verbose:
+            logger.debug(f"Using {mosaic_workers} workers for {num_images} images")
+
         try:
             images = series_index.get_images(
                 positions=positions,
                 contrast=window_settings,
                 image_width=args.image_width,
+                max_workers=mosaic_workers,
             )
         except ValueError as e:
             logger.error(f"Failed to retrieve images: {e}")
