@@ -10,19 +10,12 @@ import argparse
 import sys
 import logging
 from pathlib import Path
-from typing import Optional
-
-import polars as pl
 
 from .image_utils import MosaicGenerator, save_image
 from .contrast import ContrastPresets
-from .index_cache import _generate_parquet_table, load_or_generate_index, get_cache_directory
+from .index_cache import _generate_parquet_table, get_cache_directory
 from .retriever import DICOMRetriever
-from .series_spec import (
-    parse_series_specification,
-    normalize_series_uid,
-    parse_and_normalize_series,
-)
+from .series_spec import parse_and_normalize_series
 
 
 def setup_logging(verbose=False):
@@ -122,62 +115,6 @@ def add_cache_arguments(parser):
              "By default, caching is enabled using DICOM_SERIES_PREVIEW_CACHE_DIR env var "
              "or platform-specific cache directory."
     )
-
-
-def _load_or_generate_index(
-    index_dir: Optional[str], series_uid: str, root_path: str, verbose: bool, logger
-) -> Optional[pl.DataFrame]:
-    """
-    Load or generate a DICOM series index.
-
-    Loads from cache directory or auto-generates if needed.
-    Index files are named {series_uid}_index.parquet in the cache directory.
-
-    Args:
-        index_dir: Optional cache directory from --index-directory
-        series_uid: Normalized series UID
-        root_path: Root storage path
-        verbose: Verbose logging enabled
-        logger: Logger instance
-
-    Returns:
-        Polars DataFrame with index data, or None on error
-    """
-    return load_or_generate_index(
-        series_uid=series_uid,
-        root_path=root_path,
-        index_dir=index_dir,
-        logger_instance=logger,
-    )
-
-
-def _initialize_retriever_with_cache(
-    root_path: str, series_uid: str, args, logger
-) -> DICOMRetriever:
-    """
-    Initialize DICOMRetriever with optional cache support.
-
-    Checks if caching is enabled (default unless --no-cache is set),
-    loads or generates index if enabled, and passes to retriever.
-
-    Args:
-        root_path: Root storage path
-        series_uid: Normalized series UID
-        args: Parsed command arguments (must have cache_dir and no_cache attributes)
-        logger: Logger instance
-
-    Returns:
-        DICOMRetriever instance (with optional index_df)
-    """
-    index_df = None
-    use_cache = not getattr(args, 'no_cache', False)
-    if use_cache:
-        cache_dir = getattr(args, 'cache_dir', None)
-        index_df = _load_or_generate_index(
-            cache_dir, series_uid, root_path, args.verbose, logger
-        )
-
-    return DICOMRetriever(root_path, index_df=index_df)
 
 
 def parse_contrast_arg(contrast_str: str) -> dict | str | None:

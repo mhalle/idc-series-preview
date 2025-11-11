@@ -294,14 +294,18 @@ class Instance:
 
         return grid
 
-    def _normalize_contrast(self, contrast: Optional[Union[str, Contrast]]) -> Union[str, dict, None]:
+    def _normalize_contrast(self, contrast: Optional[Union[str, dict, Contrast]]) -> Union[str, dict, None]:
         """
         Normalize contrast input to format expected by MosaicGenerator.
 
         Parameters
         ----------
-        contrast : str, Contrast, or None
-            Contrast specification
+        contrast : str, Contrast, dict, or None
+            Contrast specification. Can be:
+            - None: use default
+            - str: preset name, 'auto', 'embedded'
+            - Contrast: contrast object
+            - dict: with 'window_width' and 'window_center' keys
 
         Returns
         -------
@@ -313,6 +317,15 @@ class Instance:
 
         if isinstance(contrast, str):
             return contrast
+
+        if isinstance(contrast, dict):
+            # Dict with window_width and window_center
+            if 'window_width' in contrast and 'window_center' in contrast:
+                return {
+                    'window_width': contrast['window_width'],
+                    'window_center': contrast['window_center'],
+                }
+            return None
 
         if isinstance(contrast, Contrast):
             # If spec is provided, use that (handles presets, auto, embedded, WW/WL)
