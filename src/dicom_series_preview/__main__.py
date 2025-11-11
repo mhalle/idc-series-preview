@@ -17,8 +17,7 @@ import polars as pl
 from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
-from .index_cache import _generate_parquet_table
-from .index_cache import IndexCache
+from .index_cache import _generate_parquet_table, load_or_generate_index, get_cache_directory
 
 
 def parse_series_specification(
@@ -214,8 +213,8 @@ def _load_or_generate_index(
     """
     Load or generate a DICOM series index.
 
-    Uses IndexCache to manage loading from cache directory and auto-generating
-    if needed. Index files are named {series_uid}.index.parquet in the cache directory.
+    Loads from cache directory or auto-generates if needed.
+    Index files are named {series_uid}_index.parquet in the cache directory.
 
     Args:
         index_dir: Optional cache directory from --index-directory
@@ -227,11 +226,10 @@ def _load_or_generate_index(
     Returns:
         Polars DataFrame with index data, or None on error
     """
-    return IndexCache.load_or_generate_index(
+    return load_or_generate_index(
         series_uid=series_uid,
         root_path=root_path,
         index_dir=index_dir,
-        verbose=verbose,
         logger_instance=logger,
     )
 
@@ -825,7 +823,7 @@ def get_index_command(args, logger):
         if hasattr(args, 'cache_dir') and args.cache_dir:
             output_dir = Path(args.cache_dir)
         else:
-            output_dir = IndexCache.get_cache_directory()
+            output_dir = get_cache_directory()
 
         # Determine index path
         index_path = output_dir / "indices" / f"{series_uid}_index.parquet"
@@ -1084,7 +1082,7 @@ def build_index_command(args, logger):
             series_list = args.series
         else:
             # Default: use default cache directory
-            output_dir = IndexCache.get_cache_directory()
+            output_dir = get_cache_directory()
             series_list = args.series
 
         if args.verbose:

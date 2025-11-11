@@ -5,7 +5,6 @@ from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 from .contrast import ContrastPresets
 from .slice_sorting import sort_slices, SliceParameterization
-from .index_cache import IndexCache
 from .api import SeriesIndex, Contrast, Instance
 
 __version__ = "0.1.0"
@@ -19,7 +18,6 @@ __all__ = [
     "ContrastPresets",
     "sort_slices",
     "SliceParameterization",
-    "IndexCache",
     "SeriesIndex",
     "Contrast",
     "Instance",

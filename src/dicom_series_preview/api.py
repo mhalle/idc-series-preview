@@ -9,7 +9,7 @@ import pydicom
 from PIL import Image
 
 from .__main__ import _parse_and_normalize_series
-from .index_cache import IndexCache
+from .index_cache import load_or_generate_index
 from .retriever import DICOMRetriever
 from .mosaic import MosaicGenerator
 
@@ -313,7 +313,7 @@ class SeriesIndex:
         self._logger.debug(f"Resolved to UID: {self._series_uid}, Root: {self._root_path}")
 
         # Load or generate index
-        index_df = IndexCache.load_or_generate_index(
+        index_df = load_or_generate_index(
             series_uid=self._series_uid,
             root_path=self._root_path,
             index_dir=cache_dir,
