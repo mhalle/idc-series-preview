@@ -85,13 +85,13 @@ def add_common_arguments(parser):
 def add_range_arguments(parser):
     """Add range selection arguments (--start, --end)."""
     parser.add_argument(
-        "--start",
+        "-s", "--start",
         type=float,
         default=0.0,
         help="Start of normalized z-position range (0.0-1.0). Default: 0.0 (beginning of series)"
     )
     parser.add_argument(
-        "--end",
+        "-e", "--end",
         type=float,
         default=1.0,
         help="End of normalized z-position range (0.0-1.0). Default: 1.0 (end of series)"
@@ -404,9 +404,11 @@ def image_command(args, logger):
         if args.verbose:
             logger.info("Generating image...")
         try:
+            # Use natural size (large default) if no width specified
+            image_width = args.image_width if args.image_width is not None else 2048
             output_image = instance.get_image(
                 contrast=window_settings,
-                image_width=args.image_width,
+                image_width=image_width,
             )
         except ValueError as e:
             logger.error(f"Failed to generate image: {e}")
@@ -743,21 +745,77 @@ def _setup_mosaic_subcommand(subparsers):
     mosaic_parser.set_defaults(func=mosaic_command)
 
 
-def _setup_get_image_subcommand(subparsers):
+def _setup_image_subcommand(subparsers):
     """
-    Setup get-image subcommand with all its arguments.
+    Setup image subcommand with all its arguments.
 
     Args:
         subparsers: The subparsers object from ArgumentParser
     """
     image_parser = subparsers.add_parser(
-        "get-image",
+        "image",
         help="Extract a single image from a DICOM series at a specific position"
     )
-    add_common_arguments(image_parser)
-    add_cache_arguments(image_parser)
+
+    # Add positional arguments
     image_parser.add_argument(
-        "--position",
+        "seriesuid",
+        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
+             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+             "Full paths override --root parameter."
+    )
+    image_parser.add_argument(
+        "output",
+        help="Output image path (.webp or .jpg)"
+    )
+
+    # Storage arguments
+    image_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    # Image scaling with short alias
+    image_parser.add_argument(
+        "-w", "--image-width",
+        type=int,
+        default=None,  # None means use natural size (no scaling)
+        help="Width of image in pixels. Height will be proportionally scaled. "
+             "Default: None (natural DICOM image size)"
+    )
+
+    # Contrast parameters
+    image_parser.add_argument(
+        "--contrast",
+        help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
+             "legacy alias (lung, bone, brain, etc.), shortcut (soft for ct-soft-tissue, media for ct-mediastinum), "
+             "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
+             "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
+             "Supports both slash (medical standard) and comma separators."
+    )
+
+    # Output format arguments
+    image_parser.add_argument(
+        "-q", "--quality",
+        type=int,
+        default=25,
+        help="Output image quality 0-100. Default: 25 for WebP, 70+ recommended for JPEG"
+    )
+
+    # Utility arguments
+    image_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    # Cache arguments
+    add_cache_arguments(image_parser)
+
+    # Position arguments
+    image_parser.add_argument(
+        "-p", "--position",
         type=float,
         required=True,
         help="Extract image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior"
@@ -768,6 +826,7 @@ def _setup_get_image_subcommand(subparsers):
         default=0,
         help="Offset from --position by number of slices (e.g., 1 for next slice, -1 for previous). Default: 0"
     )
+
     image_parser.set_defaults(func=image_command)
 
 
@@ -815,7 +874,7 @@ def _setup_contrast_mosaic_subcommand(subparsers):
 
     # Instance selection: position mode (single instance)
     contrast_parser.add_argument(
-        "--position",
+        "-p", "--position",
         type=float,
         help="Extract single image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior. "
              "Cannot be used with --start/--end."
@@ -829,13 +888,13 @@ def _setup_contrast_mosaic_subcommand(subparsers):
 
     # Instance selection: range mode (multiple instances)
     contrast_parser.add_argument(
-        "--start",
+        "-s", "--start",
         type=float,
         help="Start of normalized z-position range (0.0-1.0) for selecting multiple instances. "
              "Cannot be used with --position."
     )
     contrast_parser.add_argument(
-        "--end",
+        "-e", "--end",
         type=float,
         help="End of normalized z-position range (0.0-1.0) for selecting multiple instances. "
              "Cannot be used with --position."
@@ -1108,7 +1167,7 @@ def _setup_parser():
     Setup and configure the main argument parser with all subcommands.
 
     Returns:
-        Configured ArgumentParser with mosaic, get-image, and contrast-mosaic subcommands
+        Configured ArgumentParser with mosaic, image, and contrast-mosaic subcommands
     """
     parser = argparse.ArgumentParser(
         description="Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization.",
@@ -1120,7 +1179,7 @@ def _setup_parser():
 
     # Setup subcommands
     _setup_mosaic_subcommand(subparsers)
-    _setup_get_image_subcommand(subparsers)
+    _setup_image_subcommand(subparsers)
     _setup_contrast_mosaic_subcommand(subparsers)
     _setup_build_index_subcommand(subparsers)
     _setup_get_index_subcommand(subparsers)

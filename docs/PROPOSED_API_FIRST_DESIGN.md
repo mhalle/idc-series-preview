@@ -487,7 +487,7 @@ process_series("38902e14-b11f-4548-910e-771ee757dc82")
 ```bash
 # These all still work, but handlers are simpler now
 dicom-series-preview mosaic SERIES output.webp --tile-width 8 --contrast lung
-dicom-series-preview get-image SERIES output.webp --position 0.5
+dicom-series-preview image SERIES output.webp --position 0.5
 dicom-series-preview contrast-mosaic SERIES output.webp --position 0.5 \
   --contrast lung --contrast bone --contrast brain
 ```

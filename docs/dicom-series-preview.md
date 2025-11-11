@@ -15,7 +15,7 @@ dicom-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 `dicom-series-preview` is a command-line tool for previewing DICOM medical imaging series stored on S3, HTTP, or local filesystems. It provides multiple visualization modes:
 
 - **mosaic**: Generate tiled grids of images from a series
-- **get-image**: Extract single images at specific positions
+- **image**: Extract single images at specific positions
 - **contrast-mosaic**: Create comparison grids with multiple contrast settings
 - **build-index**: Pre-build cached indices for faster access
 - **get-index**: Retrieve or create an index and return its path
@@ -166,14 +166,14 @@ dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.jpg \
 
 ---
 
-### get-image
+### image
 
 Extract a single image from a DICOM series at a specific position.
 
 **SYNOPSIS**
 
 ```
-dicom-series-preview get-image SERIESUID OUTPUT [OPTIONS]
+dicom-series-preview image SERIESUID OUTPUT [OPTIONS]
 ```
 
 **ARGUMENTS**
@@ -204,25 +204,25 @@ dicom-series-preview get-image SERIESUID OUTPUT [OPTIONS]
 
 ```bash
 # Image at 50% position (middle of series)
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
   --position 0.5
 
 # Superior image with lung contrast
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
   --position 0.0 --contrast lung
 
 # Inferior image with custom window/level
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
   --position 1.0 --contrast 350/50
 
 # Adjacent slices from same position
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 slice_1.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice_1.webp \
   --position 0.5 --slice-offset 1
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 slice_-1.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice_-1.webp \
   --position 0.5 --slice-offset -1
 
 # High-resolution single image
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 hires.jpg \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 hires.jpg \
   --position 0.5 --image-width 512 --quality 85
 ```
 
@@ -855,7 +855,7 @@ Index files are stored in Apache Parquet format:
 ## HISTORY
 
 **Version 0.1.0** (current)
-- Five commands: mosaic, get-image, contrast-mosaic, build-index, get-index
+- Five commands: mosaic, image, contrast-mosaic, build-index, get-index
 - S3, HTTP, and local filesystem support
 - Caching system with Parquet indices
 - Multiple contrast presets and custom windowing

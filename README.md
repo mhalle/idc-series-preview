@@ -118,10 +118,10 @@ Options:
   --help                 Show this help message
 ```
 
-### Get-Image Subcommand
+### Image Subcommand
 
 ```
-Usage: dicom-series-preview get-image [OPTIONS] SERIESUID OUTPUT
+Usage: dicom-series-preview image [OPTIONS] SERIESUID OUTPUT
 
 Arguments:
   SERIESUID              DICOM Series UID (full, partial with hyphens, or prefix with wildcard)
@@ -203,15 +203,15 @@ dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
 ### Extract single image at position (no tiling)
 ```bash
 # Image at the beginning
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 0.0
 
 # Image at the middle
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 0.5
 
 # Image at the end
-dicom-series-preview get-image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 1.0
 ```
 
@@ -351,19 +351,19 @@ The `--position` option extracts a single DICOM instance at a specific normalize
 **Examples:**
 ```bash
 # Superior slice at beginning
-dicom-series-preview get-image <uid> superior.webp --position 0.0
+dicom-series-preview image <uid> superior.webp --position 0.0
 
 # Middle slice
-dicom-series-preview get-image <uid> middle.webp --position 0.5
+dicom-series-preview image <uid> middle.webp --position 0.5
 
 # Inferior slice at end
-dicom-series-preview get-image <uid> inferior.webp --position 1.0
+dicom-series-preview image <uid> inferior.webp --position 1.0
 
 # Specific level with bone preset
-dicom-series-preview get-image <uid> image.webp --position 0.33 --contrast bone
+dicom-series-preview image <uid> image.webp --position 0.33 --contrast bone
 
 # With custom window,level
-dicom-series-preview get-image <uid> image.webp --position 0.5 --contrast 1500,500
+dicom-series-preview image <uid> image.webp --position 0.5 --contrast 1500,500
 ```
 
 ## Supported DICOM Codecs
