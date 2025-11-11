@@ -50,10 +50,10 @@ def add_common_arguments(parser):
 
     # Image scaling (shared)
     parser.add_argument(
-        "--image-width",
+        "-w", "--image-width",
         type=int,
-        default=128,
-        help="Width of each image tile in pixels. Height will be proportionally scaled. Default: 128"
+        default=256,
+        help="Width of each image tile in pixels. Height will be proportionally scaled. Default: 256"
     )
 
     # Contrast parameters (shared)
@@ -734,8 +734,8 @@ def _setup_mosaic_subcommand(subparsers):
     mosaic_parser.add_argument(
         "--tile-width",
         type=int,
-        default=6,
-        help="Number of images per row in mosaic. Default: 6"
+        default=3,
+        help="Number of images per row in mosaic. Default: 3"
     )
     mosaic_parser.add_argument(
         "--tile-height",
@@ -866,7 +866,7 @@ def _setup_contrast_mosaic_subcommand(subparsers):
 
     # Image sizing
     contrast_parser.add_argument(
-        "--image-width",
+        "-w", "--image-width",
         type=int,
         default=128,
         help="Width of each image in pixels. Height will be proportionally scaled. Default: 128"
