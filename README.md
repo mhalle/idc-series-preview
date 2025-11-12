@@ -37,22 +37,22 @@ pip install -e .
 
 ```bash
 # Generate a 6x6 mosaic from an IDC series (default S3 bucket)
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 
 # With custom tile grid
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --tile-width 8 --tile-height 6 --image-width 64
 
 # With lung contrast preset
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast lung -q 50
 
 # From local filesystem
-dicom-series-preview mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+idc-series-preview mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
   --root /path/to/dicom/series
 
 # With verbose output
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
 ```
 
 ## Features
@@ -98,7 +98,7 @@ Custom values also supported via window,level format: `--contrast 1500,500`
 ### Mosaic Subcommand
 
 ```
-Usage: dicom-series-preview mosaic [OPTIONS] SERIESUID OUTPUT
+Usage: idc-series-preview mosaic [OPTIONS] SERIESUID OUTPUT
 
 Arguments:
   SERIESUID              DICOM Series UID (full, partial with hyphens, or prefix with wildcard)
@@ -121,7 +121,7 @@ Options:
 ### Image Subcommand
 
 ```
-Usage: dicom-series-preview image [OPTIONS] SERIESUID OUTPUT
+Usage: idc-series-preview image [OPTIONS] SERIESUID OUTPUT
 
 Arguments:
   SERIESUID              DICOM Series UID (full, partial with hyphens, or prefix with wildcard)
@@ -143,75 +143,75 @@ Options:
 
 ### From IDC (default S3 bucket)
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 ```
 
 ### Custom size and quality
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --tile-width 10 --tile-height 8 --image-width 100 -q 40
 ```
 
 ### With lung preset contrast
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast lung -q 50
 ```
 
 ### With custom window,level values
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast 350,50
 ```
 
 ### Using shortcut for soft-tissue preset
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast soft
 ```
 
 ### From custom HTTP server
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --root http://dicom-server.example.com/series
 ```
 
 ### From local directory
 ```bash
-dicom-series-preview mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+idc-series-preview mosaic d94176e6-bc8e-4666-b143-639754258d06 output.webp \
   --root /mnt/dicom-storage
 ```
 
 ### With all verbose details
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast lung -q 50 -v
 ```
 
 ### Using range selection (middle 60% of series)
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.2 --end 0.8
 ```
 
 ### Using range selection (first 25% of series)
 ```bash
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.0 --end 0.25
 ```
 
 ### Extract single image at position (no tiling)
 ```bash
 # Image at the beginning
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 0.0
 
 # Image at the middle
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 0.5
 
 # Image at the end
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --position 1.0
 ```
 
@@ -351,19 +351,19 @@ The `--position` option extracts a single DICOM instance at a specific normalize
 **Examples:**
 ```bash
 # Superior slice at beginning
-dicom-series-preview image <uid> superior.webp --position 0.0
+idc-series-preview image <uid> superior.webp --position 0.0
 
 # Middle slice
-dicom-series-preview image <uid> middle.webp --position 0.5
+idc-series-preview image <uid> middle.webp --position 0.5
 
 # Inferior slice at end
-dicom-series-preview image <uid> inferior.webp --position 1.0
+idc-series-preview image <uid> inferior.webp --position 1.0
 
 # Specific level with bone preset
-dicom-series-preview image <uid> image.webp --position 0.33 --contrast bone
+idc-series-preview image <uid> image.webp --position 0.33 --contrast bone
 
 # With custom window,level
-dicom-series-preview image <uid> image.webp --position 0.5 --contrast 1500,500
+idc-series-preview image <uid> image.webp --position 0.5 --contrast 1500,500
 ```
 
 ## Supported DICOM Codecs

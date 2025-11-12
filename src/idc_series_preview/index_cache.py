@@ -7,7 +7,7 @@ for avoiding redundant header retrieval from storage.
 Index directory resolution (in order of precedence):
 1. --index-directory CLI argument
 2. DICOM_SERIES_PREVIEW_INDEX_DIR environment variable
-3. Default: {platformdirs.user_cache_dir("dicom-series-preview")}/indices/
+3. Default: {platformdirs.user_cache_dir("idc-series-preview")}/indices/
 
 Index generation uses progressive range requests to fetch headers efficiently,
 then extracts necessary fields to build a Polars DataFrame.
@@ -158,7 +158,7 @@ def get_cache_directory(cli_arg: Optional[str] = None) -> Path:
     Resolution order:
     1. CLI argument (--cache-dir)
     2. Environment variable (DICOM_SERIES_PREVIEW_CACHE_DIR)
-    3. Default: platformdirs.user_cache_dir("dicom-series-preview")
+    3. Default: platformdirs.user_cache_dir("idc-series-preview")
 
     Indices are stored in: {cache_dir}/indices/
 
@@ -178,7 +178,7 @@ def get_cache_directory(cli_arg: Optional[str] = None) -> Path:
         return Path(env_var)
 
     # 3. Default platformdirs location
-    return Path(user_cache_dir("dicom-series-preview"))
+    return Path(user_cache_dir("idc-series-preview"))
 
 
 def get_index_path(series_uid: str, cache_dir: Optional[Path] = None) -> Path:

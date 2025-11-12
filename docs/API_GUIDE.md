@@ -18,7 +18,7 @@ Complete reference for the `SeriesIndex` class and composable patterns for worki
 Entry point for accessing a DICOM series. Handles instance retrieval, caching, and image rendering.
 
 ```python
-from dicom_series_preview import SeriesIndex
+from idc_series_preview import SeriesIndex
 
 # Initialize with series UID
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")
@@ -41,7 +41,7 @@ print(instance.dataset)  # pydicom.Dataset, cached in memory
 Specifies how to apply window/level to DICOM pixel data. Supports presets, auto-detection, or custom values.
 
 ```python
-from dicom_series_preview import Contrast
+from idc_series_preview import Contrast
 
 # Multiple ways to specify contrast
 c1 = Contrast("lung")                          # Preset
@@ -252,7 +252,7 @@ The API is designed for composition. Build higher-level operations from primitiv
 Tile multiple rendered images into a grid.
 
 ```python
-from dicom_series_preview import MosaicGenerator
+from idc_series_preview import MosaicGenerator
 
 # Get images
 images = index.get_images(positions=[i/35 for i in range(36)], contrast="lung")
@@ -267,7 +267,7 @@ mosaic.save("output.png")
 Mosaic showing multiple contrasts for multiple instances. Each row is an instance, each column is a contrast.
 
 ```python
-from dicom_series_preview import Contrast, MosaicGenerator
+from idc_series_preview import Contrast, MosaicGenerator
 
 # Fetch instances
 instances = index.get_instances(positions=[0.2, 0.5, 0.8])
@@ -379,7 +379,7 @@ pixel_arrays = [inst.get_pixel_array() for inst in instances]
 ### Example 1: View Series Overview
 
 ```python
-from dicom_series_preview import SeriesIndex
+from idc_series_preview import SeriesIndex
 
 # Create index
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")
@@ -399,7 +399,7 @@ middle_img.save("middle.png")
 ### Example 2: Create Diagnostic Grid
 
 ```python
-from dicom_series_preview import SeriesIndex, MosaicGenerator
+from idc_series_preview import SeriesIndex, MosaicGenerator
 
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")
 
@@ -415,7 +415,7 @@ mosaic.save("diagnostic_overview.png")
 ### Example 3: Multi-Contrast Analysis
 
 ```python
-from dicom_series_preview import SeriesIndex, Contrast, MosaicGenerator
+from idc_series_preview import SeriesIndex, Contrast, MosaicGenerator
 
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")
 
@@ -438,7 +438,7 @@ mosaic.save("multi_contrast_analysis.png")
 ### Example 4: Efficient Metadata Browse
 
 ```python
-from dicom_series_preview import SeriesIndex
+from idc_series_preview import SeriesIndex
 
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")
 
@@ -463,7 +463,7 @@ image.save("interesting.png")
 ### Example 5: Custom Pixel Processing
 
 ```python
-from dicom_series_preview import SeriesIndex
+from idc_series_preview import SeriesIndex
 import numpy as np
 
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")

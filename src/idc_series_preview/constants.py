@@ -1,4 +1,4 @@
-"""Default configuration values and constants for dicom-series-preview."""
+"""Default configuration values and constants for idc-series-preview."""
 
 # CLI defaults
 DEFAULT_IMAGE_WIDTH = 256

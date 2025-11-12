@@ -9,15 +9,17 @@ and visualization. Supports both tiled mosaics and individual image extraction.
 import argparse
 import sys
 import logging
+import shutil
 from pathlib import Path
 
 from .image_utils import MosaicGenerator, save_image
 from .contrast import ContrastPresets
-from .index_cache import _generate_parquet_table, get_cache_directory
-from .retriever import DICOMRetriever
-from .series_spec import parse_and_normalize_series
+from .index_cache import get_cache_directory
 from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_MOSAIC_TILE_SIZE, DEFAULT_IMAGE_QUALITY
 from .workers import optimal_workers
+
+
+SUPPORTED_INDEX_FORMATS = {"parquet", "csv", "json", "jsonl"}
 
 
 def setup_logging(verbose=False):
@@ -118,6 +120,57 @@ def add_cache_arguments(parser):
              "By default, caching is enabled using DICOM_SERIES_PREVIEW_CACHE_DIR env var "
              "or platform-specific cache directory."
     )
+
+
+def _split_format_prefix(output_value: str):
+    """Return (format, path) if the value uses format:path syntax."""
+    if not output_value:
+        return None, None
+
+    if ":" not in output_value:
+        return None, output_value
+
+    prefix, path = output_value.split(":", 1)
+    if prefix in SUPPORTED_INDEX_FORMATS and path:
+        return prefix, path
+
+    return None, output_value
+
+
+def _infer_format_from_suffix(path: Path):
+    """Infer index export format based on file suffix."""
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        return "parquet"
+    if suffix == ".csv":
+        return "csv"
+    if suffix == ".json":
+        return "json"
+    if suffix in (".jsonl", ".ndjson"):
+        return "jsonl"
+    return None
+
+
+def _resolve_get_index_output(args, logger):
+    """Determine requested format/path for get-index output."""
+    output_value = getattr(args, "output", None)
+    format_arg = getattr(args, "format", None)
+
+    if not output_value:
+        if format_arg:
+            logger.error("--format requires an output destination")
+            return None
+        return ("print", None)
+
+    prefix_format, path_str = _split_format_prefix(output_value)
+    output_path = Path(path_str)
+    target_format = format_arg or prefix_format or _infer_format_from_suffix(output_path) or "parquet"
+
+    if target_format not in SUPPORTED_INDEX_FORMATS:
+        logger.error(f"Unsupported output format: {target_format}")
+        return None
+
+    return (target_format, output_path)
 
 
 def parse_contrast_arg(contrast_str: str) -> dict | str | None:
@@ -653,73 +706,61 @@ def contrast_mosaic_command(args, logger):
 def get_index_command(args, logger):
     """Get or create a DICOM series index and return its path."""
     try:
-        # Parse and normalize series specification
-        result = parse_and_normalize_series(args.series, args.root, logger)
-        if result is None:
-            return 1
-        root_path, series_uid = result
+        from .api import SeriesIndex
 
-        # Determine output directory
-        if hasattr(args, 'cache_dir') and args.cache_dir:
-            output_dir = Path(args.cache_dir)
-        else:
-            output_dir = get_cache_directory()
-
-        # Determine index path
-        index_path = output_dir / "indices" / f"{series_uid}_index.parquet"
+        # Determine cache directory (CLI override or default)
+        cache_dir = Path(args.cache_dir) if getattr(args, 'cache_dir', None) else get_cache_directory()
+        cache_dir_str = str(cache_dir)
 
         if args.verbose:
-            logger.info(f"Looking for index for series {series_uid}")
+            logger.info(f"Ensuring index for series: {args.series}")
+            logger.info(f"Root: {args.root}")
+            logger.info(f"Cache directory: {cache_dir}")
 
-        # Check if index already exists
-        if index_path.exists():
-            logger.info(f"Index found: {index_path}")
+        try:
+            series_index = SeriesIndex(
+                args.series,
+                root=args.root,
+                cache_dir=cache_dir_str,
+                use_cache=True,
+            )
+        except ValueError as e:
+            logger.error(f"Failed to initialize series index: {e}")
+            return 1
+
+        index_path = cache_dir / "indices" / f"{series_index.series_uid}_index.parquet"
+
+        output_request = _resolve_get_index_output(args, logger)
+        if output_request is None:
+            return 1
+
+        if output_request[0] == "print":
+            if args.verbose:
+                logger.info(f"Index ready: {index_path}")
+            print(index_path)
             return 0
 
-        # Index doesn't exist, build it
-        if args.verbose:
-            logger.info(f"Building index for series {series_uid}")
+        export_format, export_path = output_request
+        export_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Fetch headers using retriever
         try:
-            retriever = DICOMRetriever(root_path)
-            instance_uids = retriever.list_instances(series_uid)
-            if not instance_uids:
-                logger.error(f"No DICOM instances found for series {series_uid}")
-                return 1
-
-            if args.verbose:
-                logger.info(f"Found {len(instance_uids)} instances")
-
-            # Fetch headers in parallel using progressive range requests
-            urls = [f"{series_uid}/{uid}" for uid in instance_uids]
-            datasets_list = retriever.get_instances(urls, headers_only=True)
-
-            # Build dict mapping uid to dataset
-            datasets_by_uid = {}
-            for uid, dataset in zip(instance_uids, datasets_list):
-                if dataset is not None:
-                    datasets_by_uid[uid] = dataset
-
-            if not datasets_by_uid:
-                logger.error(f"Failed to fetch any headers from {len(instance_uids)} instances")
-                return 1
-
-            # Construct storage root with series UID
-            storage_root = f"{root_path}/{series_uid}/"
-
-            # Generate parquet table
-            if args.verbose:
-                logger.info("Generating index parquet table...")
-            df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
-            index_path.parent.mkdir(parents=True, exist_ok=True)
-            df.write_parquet(str(index_path))
-
+            if export_format == "parquet":
+                shutil.copy2(index_path, export_path)
+            else:
+                df = series_index.index_dataframe
+                if export_format == "csv":
+                    df.write_csv(str(export_path))
+                elif export_format == "json":
+                    df.write_json(str(export_path))
+                elif export_format == "jsonl":
+                    df.write_ndjson(str(export_path))
         except Exception as e:
-            logger.error(f"Failed to generate index: {e}")
+            logger.error(f"Failed to export index to {export_format}: {e}")
             return 1
 
-        logger.info(f"Index saved: {index_path}")
+        if args.verbose:
+            logger.info(f"Index exported to {export_path} ({export_format})")
+        print(export_path)
         return 0
 
     except Exception as e:
@@ -967,83 +1008,44 @@ def build_index_command(args, logger):
         0 on success, 1 on error
     """
     try:
-        # Determine output directory (either cache-dir or output directory)
-        if hasattr(args, 'output') and args.output:
-            # Single series mode: -o specifies the output directory
+        from .api import SeriesIndex
+
+        # Determine cache/output directory (either cache-dir, output dir, or default cache)
+        if getattr(args, "output", None):
             output_dir = Path(args.output)
             if len(args.series) != 1:
                 logger.error("When using -o, specify exactly one series")
                 return 1
-            series_list = args.series
-        elif hasattr(args, 'cache_dir') and args.cache_dir:
-            # Multiple series mode: use cache directory
+        elif getattr(args, "cache_dir", None):
             output_dir = Path(args.cache_dir)
-            series_list = args.series
         else:
-            # Default: use default cache directory
             output_dir = get_cache_directory()
-            series_list = args.series
+
+        cache_dir_str = str(output_dir)
+        series_list = args.series
 
         if args.verbose:
             logger.info(f"Building indices for {len(series_list)} series")
-            logger.info(f"Output directory: {output_dir}")
+            logger.info(f"Cache/output directory: {output_dir}")
 
         success_count = 0
         for series_spec in series_list:
             try:
-                # Parse and normalize series specification
-                result = parse_and_normalize_series(series_spec, args.root, logger)
-                if result is None:
-                    logger.error(f"Failed to parse series: {series_spec}")
-                    continue
-
-                root_path, series_uid = result
-
                 if args.verbose:
-                    logger.info(f"Building index for series {series_uid}...")
+                    logger.info(f"Resolving and indexing series '{series_spec}'")
 
-                # Determine index path
-                index_path = output_dir / "indices" / f"{series_uid}_index.parquet"
+                series_index = SeriesIndex(
+                    series_spec,
+                    root=args.root,
+                    cache_dir=cache_dir_str,
+                    use_cache=True,
+                )
 
-                # Fetch headers using retriever
-                retriever = DICOMRetriever(root_path)
-                instance_uids = retriever.list_instances(series_uid)
-                if not instance_uids:
-                    logger.warning(f"No instances found for series {series_uid}")
-                    continue
-
-                # Apply limit if specified
-                if hasattr(args, 'limit') and args.limit:
-                    instance_uids = instance_uids[:args.limit]
-
-                # Fetch headers in parallel using progressive range requests
-                urls = [f"{series_uid}/{uid}" for uid in instance_uids]
-                datasets_list = retriever.get_instances(urls, headers_only=True)
-
-                # Build dict mapping uid to dataset
-                datasets_by_uid = {}
-                for uid, dataset in zip(instance_uids, datasets_list):
-                    if dataset is not None:
-                        datasets_by_uid[uid] = dataset
-
-                if not datasets_by_uid:
-                    logger.warning(f"Failed to fetch any headers from {len(instance_uids)} instances")
-                    continue
-
-                # Construct storage root with series UID
-                storage_root = f"{root_path}/{series_uid}/"
-
-                # Generate parquet table and write to file
-                if args.verbose:
-                    logger.info("Generating index parquet table...")
-                df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
-                index_path.parent.mkdir(parents=True, exist_ok=True)
-                df.write_parquet(str(index_path))
-
+                index_path = output_dir / "indices" / f"{series_index.series_uid}_index.parquet"
                 if args.verbose:
                     logger.info(
-                        f"Index saved: {index_path} "
-                        f"({len(df)} rows, {len(df.columns)} columns)"
+                        f"Index ready: {index_path} "
+                        f"({series_index.instance_count} instances)"
                     )
                 success_count += 1
 
@@ -1066,8 +1068,8 @@ def _setup_build_index_subcommand(subparsers):
     Setup build-index subcommand with all its arguments.
 
     Supports two modes:
-    1. Multiple series with --cache-dir: dicom-series-preview build-index SERIES1 SERIES2 ... --cache-dir /path
-    2. Single series with -o: dicom-series-preview build-index SERIES -o /output/dir
+    1. Multiple series with --cache-dir: idc-series-preview build-index SERIES1 SERIES2 ... --cache-dir /path
+    2. Single series with -o: idc-series-preview build-index SERIES -o /output/dir
 
     Args:
         subparsers: The subparsers object from ArgumentParser
@@ -1109,13 +1111,6 @@ def _setup_build_index_subcommand(subparsers):
         help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
     )
 
-    # Optional arguments
-    index_parser.add_argument(
-        "--limit",
-        type=int,
-        help="Limit the number of instances to process (useful for large series)"
-    )
-
     # Utility arguments
     index_parser.add_argument(
         "-v", "--verbose",
@@ -1147,6 +1142,14 @@ def _setup_get_index_subcommand(subparsers):
              "Full paths override --root parameter."
     )
 
+    get_index_parser.add_argument(
+        "output",
+        nargs="?",
+        metavar="OUTPUT",
+        help="Optional destination for the index. Supports format prefixes such as 'csv:/tmp/out.csv' "
+             "or paths whose extension implies the format (parquet, csv, json, jsonl)."
+    )
+
     # Storage arguments
     get_index_parser.add_argument(
         "--root",
@@ -1162,6 +1165,13 @@ def _setup_get_index_subcommand(subparsers):
              "Overrides default cache location. Index files are stored in "
              "{CACHE_DIR}/indices/{SERIESUID}_index.parquet and "
              "loaded/generated automatically."
+    )
+
+    get_index_parser.add_argument(
+        "--format",
+        choices=sorted(SUPPORTED_INDEX_FORMATS),
+        help="Explicit index export format when --output is provided. "
+             "Overrides prefix/extension detection."
     )
 
     # Utility arguments
@@ -1183,7 +1193,7 @@ def _setup_parser():
     """
     parser = argparse.ArgumentParser(
         description="Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization.",
-        prog="dicom-series-preview"
+        prog="idc-series-preview"
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")

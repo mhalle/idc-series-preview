@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 import numpy as np
 
-from dicom_series_preview import SeriesIndex, Contrast, Instance, PositionInterpolator
+from idc_series_preview import SeriesIndex, Contrast, Instance, PositionInterpolator
 
 
 # Test series from IDC (stable, publicly available)

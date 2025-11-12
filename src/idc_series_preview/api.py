@@ -1,4 +1,4 @@
-"""High-level API for dicom-series-preview."""
+"""High-level API for idc-series-preview."""
 
 import logging
 from typing import Optional, Union
@@ -517,6 +517,11 @@ class SeriesIndex:
             .sort("count", descending=True)
         )
         return axis_counts["PrimaryAxis"][0]
+
+    @property
+    def index_dataframe(self) -> pl.DataFrame:
+        """Return the underlying index DataFrame."""
+        return self._index_df
 
     @property
     def position_range(self) -> tuple[float, float]:

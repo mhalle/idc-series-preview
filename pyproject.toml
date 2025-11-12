@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "dicom-series-preview"
+name = "idc-series-preview"
 version = "0.5.0"
 description = "Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization"
 readme = "README.md"
@@ -47,7 +47,7 @@ gdcm = [
 ]
 
 [project.scripts]
-dicom-series-preview = "dicom_series_preview.__main__:main"
+idc-series-preview = "idc_series_preview.__main__:main"
 
 [tool.black]
 line-length = 100

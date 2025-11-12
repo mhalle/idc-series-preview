@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document proposes restructuring `dicom-series-preview` from a **CLI-first** architecture to an **API-first** architecture. Currently, the CLI drives everything and the Python API is secondary. The proposal inverts this: build a complete, standalone API that is also used by the CLI.
+This document proposes restructuring `idc-series-preview` from a **CLI-first** architecture to an **API-first** architecture. Currently, the CLI drives everything and the Python API is secondary. The proposal inverts this: build a complete, standalone API that is also used by the CLI.
 
 **Key benefit**: Users can use the same API whether they're writing Python code or using the command line.
 
@@ -125,7 +125,7 @@ Both CLI and Python users use the same API layer.
 
 ### Current Structure
 ```
-src/dicom_series_preview/
+src/idc_series_preview/
 ├── __main__.py           (100+ CLI handler functions)
 ├── retriever.py
 ├── mosaic.py
@@ -138,7 +138,7 @@ src/dicom_series_preview/
 
 ### Proposed Structure
 ```
-src/dicom_series_preview/
+src/idc_series_preview/
 ├── __main__.py           (Simple: argparse setup, dispatcher)
 ├── cli.py               (NEW: Command handlers using API)
 ├── api.py               (NEW/EXISTING: SeriesIndex, convenience functions)
@@ -198,7 +198,7 @@ src/dicom_series_preview/
 ### Example API Usage
 
 ```python
-from dicom_series_preview import SeriesIndex
+from idc_series_preview import SeriesIndex
 
 # Initialize (handles all the complex stuff)
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")
@@ -429,7 +429,7 @@ Advanced users who want low-level control can continue using these directly. `Se
 ### Jupyter Notebook
 
 ```python
-from dicom_series_preview import SeriesIndex
+from idc_series_preview import SeriesIndex
 
 # Get index (automatic caching)
 index = SeriesIndex("38902e14-b11f-4548-910e-771ee757dc82")
@@ -460,7 +460,7 @@ print(df.select(["Index", "InstanceNumber", "PrimaryPosition"]))
 ### Python Script
 
 ```python
-from dicom_series_preview import SeriesIndex
+from idc_series_preview import SeriesIndex
 
 def process_series(series_uid):
     """Process a series and generate outputs."""
@@ -486,9 +486,9 @@ process_series("38902e14-b11f-4548-910e-771ee757dc82")
 
 ```bash
 # These all still work, but handlers are simpler now
-dicom-series-preview mosaic SERIES output.webp --tile-width 8 --contrast lung
-dicom-series-preview image SERIES output.webp --position 0.5
-dicom-series-preview contrast-mosaic SERIES output.webp --position 0.5 \
+idc-series-preview mosaic SERIES output.webp --tile-width 8 --contrast lung
+idc-series-preview image SERIES output.webp --position 0.5
+idc-series-preview contrast-mosaic SERIES output.webp --position 0.5 \
   --contrast lung --contrast bone --contrast brain
 ```
 
@@ -527,14 +527,14 @@ dicom-series-preview contrast-mosaic SERIES output.webp --position 0.5 \
 ### For Library Users (Python API)
 - **Current** (still works):
   ```python
-  from dicom_series_preview import DICOMRetriever, IndexCache
+  from idc_series_preview import DICOMRetriever, IndexCache
   index_df = IndexCache.load_or_generate_index(series_uid, root_path)
   retriever = DICOMRetriever(root_path, index_df=index_df)
   ```
 
 - **Recommended** (new):
   ```python
-  from dicom_series_preview import SeriesIndex
+  from idc_series_preview import SeriesIndex
   index = SeriesIndex(series_uid, root=root_path)
   ```
 

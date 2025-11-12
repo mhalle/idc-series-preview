@@ -8,7 +8,7 @@ The `build-index` subcommand and `--index` flag provide a caching mechanism to a
 
 ### Syntax
 ```
-dicom-series-preview build-index SERIESUID [INDEXNAME]
+idc-series-preview build-index SERIESUID [INDEXNAME]
 ```
 
 ### Arguments
@@ -45,16 +45,16 @@ Output Parquet index file path.
 
 ```bash
 # Build index with default naming in current directory
-dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82
+idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82
 
 # Build index with custom filename
-dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 my_series.index.parquet
+idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 my_series.index.parquet
 
 # Build index in specific directory
-dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 /data/indices/series.index.parquet
+idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 /data/indices/series.index.parquet
 
 # From custom root
-dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
+idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
   --root /local/dicom/path
 ```
 
@@ -64,7 +64,7 @@ All other subcommands (mosaic, contrast-mosaic, etc.) will support a new optiona
 
 ### Syntax
 ```
-dicom-series-preview <command> SERIESUID OUTPUT --index [INDEXFILE] [other options]
+idc-series-preview <command> SERIESUID OUTPUT --index [INDEXFILE] [other options]
 ```
 
 ### Behavior
@@ -108,18 +108,18 @@ When loading an index file:
 
 ```bash
 # Auto-detect: looks for 38902e14-b11f-4548-910e-771ee757dc82.index.parquet
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 
 # Explicitly provide index location
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --index /data/indices/my_series.index.parquet
 
 # Force fresh data (ignore cache)
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --noindex
 
 # Auto-detect with other options
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast-preset lung --image-width 128
 ```
 
@@ -137,7 +137,7 @@ Current Directory/
 
 ### New Module/Functions
 
-Create `src/dicom_series_preview/index_cache.py`:
+Create `src/idc_series_preview/index_cache.py`:
 
 ```python
 class IndexCache:

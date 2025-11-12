@@ -316,7 +316,7 @@ toml = [
 ]
 
 [[package]]
-name = "dicom-series-preview"
+name = "idc-series-preview"
 version = "0.5.0"
 source = { editable = "." }
 dependencies = [

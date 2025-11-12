@@ -1,14 +1,14 @@
-# dicom-series-preview(1) - Generate DICOM image mosaics
+# idc-series-preview(1) - Generate DICOM image mosaics
 
 ## SYNOPSIS
 
 ```
-dicom-series-preview [OPTIONS] SERIESUID OUTPUT
+idc-series-preview [OPTIONS] SERIESUID OUTPUT
 ```
 
 ## DESCRIPTION
 
-`dicom-series-preview` retrieves DICOM instances from a series stored on S3, HTTP, or local filesystem, creates a tiled mosaic image, and exports the result in WebP or JPEG format.
+`idc-series-preview` retrieves DICOM instances from a series stored on S3, HTTP, or local filesystem, creates a tiled mosaic image, and exports the result in WebP or JPEG format.
 
 The tool uses efficient range requests to retrieve only DICOM headers initially, then fetches full pixel data only for the selected instances. It supports various window/level (contrast) presets and auto-detection of optimal display settings.
 
@@ -109,101 +109,101 @@ Output image file path. Must have a `.webp`, `.jpg`, or `.jpeg` extension.
 
 ### Basic mosaic from default S3 bucket
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp
 ```
 
 ### Custom tile grid and size
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --tile-width 8 --tile-height 6 --image-width 64
 ```
 
 ### With lung contrast preset and custom quality
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast-preset lung -q 50
 ```
 
 ### Manual window/center settings
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --window-width 350 --window-center 50
 ```
 
 ### Auto-detect contrast
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --contrast-preset auto
 ```
 
 ### From local filesystem
 ```
-dicom-series-preview d94176e6-bc8e-4666-b143-639754258d06 output.webp \
+idc-series-preview d94176e6-bc8e-4666-b143-639754258d06 output.webp \
   --root /local/dicom/path
 ```
 
 ### From custom HTTP server
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --root http://dicom-server.example.com
 ```
 
 ### Verbose output with logging
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp -v
 ```
 
 ### Range selection - middle 60% of series
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.2 --end 0.8
 ```
 
 ### Range selection - first half of series
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.0 --end 0.5
 ```
 
 ### Range selection - last quarter of series with specific contrast
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 output.webp \
   --start 0.75 --end 1.0 --contrast-preset bone
 ```
 
 ### Single image extraction - beginning of series
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
   --position 0.0
 ```
 
 ### Single image extraction - middle of series
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
   --position 0.5
 ```
 
 ### Single image extraction - end of series with specific contrast
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
   --position 1.0 --contrast-preset lung
 ```
 
 ### Single image with slice offset - next slice
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 next_slice.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 next_slice.webp \
   --position 0.5 --slice-offset 1
 ```
 
 ### Single image with slice offset - previous slice
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 prev_slice.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 prev_slice.webp \
   --position 0.5 --slice-offset -1
 ```
 
 ### Single image with slice offset - skip ahead 5 slices
 ```
-dicom-series-preview 38902e14-b11f-4548-910e-771ee757dc82 skip_ahead.webp \
+idc-series-preview 38902e14-b11f-4548-910e-771ee757dc82 skip_ahead.webp \
   --position 0.0 --slice-offset 5
 ```
 
@@ -336,7 +336,7 @@ The `build-index` subcommand extracts DICOM headers from all instances in a seri
 ### SYNOPSIS
 
 ```
-dicom-series-preview build-index [OPTIONS] SERIESUID OUTPUT
+idc-series-preview build-index [OPTIONS] SERIESUID OUTPUT
 ```
 
 ### ARGUMENTS
@@ -355,9 +355,6 @@ Output Parquet file path. Must have a `.parquet` extension.
 `--root PATH`
 : Root path for DICOM files (S3, HTTP, or local filesystem).
 : Default: `s3://idc-open-data`
-
-`--limit INT`
-: Limit the number of instances to process (useful for large series).
 
 `-v, --verbose`
 : Enable verbose logging output.
@@ -409,11 +406,6 @@ build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet
 build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet -v
 ```
 
-#### Limit to first 50 instances (for large series)
-```
-build-index 38902e14-b11f-4548-910e-771ee757dc82 series.index.parquet --limit 50
-```
-
 #### From local filesystem
 ```
 build-index d94176e6-bc8e-4666-b143-639754258d06 series.index.parquet \
@@ -454,7 +446,7 @@ Unsupported codecs (without gdcm):
 
 To support additional codecs, install the optional `gdcm` dependency (available on Linux/Windows):
 ```
-pip install dicom-series-preview[gdcm]
+pip install idc-series-preview[gdcm]
 ```
 
 ## INSTALLATION
@@ -462,13 +454,13 @@ pip install dicom-series-preview[gdcm]
 Using uv (recommended):
 ```
 uv pip install .
-uv run dicom-series-preview --help
+uv run idc-series-preview --help
 ```
 
 Using pip:
 ```
 pip install .
-dicom-series-preview --help
+idc-series-preview --help
 ```
 
 ## ENVIRONMENT

@@ -1,18 +1,18 @@
-# dicom-series-preview(1) - DICOM series preview and visualization
+# idc-series-preview(1) - DICOM series preview and visualization
 
 ## NAME
 
-`dicom-series-preview` - Preview DICOM series with intelligent sampling, contrast adjustment, and flexible output formats
+`idc-series-preview` - Preview DICOM series with intelligent sampling, contrast adjustment, and flexible output formats
 
 ## SYNOPSIS
 
 ```
-dicom-series-preview COMMAND [OPTIONS] [ARGUMENTS]
+idc-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 ```
 
 ## DESCRIPTION
 
-`dicom-series-preview` is a command-line tool for previewing DICOM medical imaging series stored on S3, HTTP, or local filesystems. It provides multiple visualization modes:
+`idc-series-preview` is a command-line tool for previewing DICOM medical imaging series stored on S3, HTTP, or local filesystems. It provides multiple visualization modes:
 
 - **mosaic**: Generate tiled grids of images from a series
 - **image**: Extract single images at specific positions
@@ -103,7 +103,7 @@ Generate a tiled mosaic/grid of images from a DICOM series.
 **SYNOPSIS**
 
 ```
-dicom-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
+idc-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
 ```
 
 **ARGUMENTS**
@@ -137,22 +137,22 @@ dicom-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
 
 ```bash
 # Default 6x6 grid from entire series
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp
 
 # Custom grid: 8 columns, 5 rows
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
   --tile-width 8 --tile-height 5
 
 # Smaller tiles with better image width
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
   --image-width 256 --tile-width 4 --tile-height 4
 
 # Middle 60% of series with lung contrast
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
   --start 0.2 --end 0.8 --contrast lung --quality 40
 
 # High-quality output
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.jpg \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.jpg \
   --quality 80 --image-width 200
 ```
 
@@ -173,7 +173,7 @@ Extract a single image from a DICOM series at a specific position.
 **SYNOPSIS**
 
 ```
-dicom-series-preview image SERIESUID OUTPUT [OPTIONS]
+idc-series-preview image SERIESUID OUTPUT [OPTIONS]
 ```
 
 **ARGUMENTS**
@@ -204,25 +204,25 @@ dicom-series-preview image SERIESUID OUTPUT [OPTIONS]
 
 ```bash
 # Image at 50% position (middle of series)
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 middle.webp \
   --position 0.5
 
 # Superior image with lung contrast
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 superior.webp \
   --position 0.0 --contrast lung
 
 # Inferior image with custom window/level
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 inferior.webp \
   --position 1.0 --contrast 350/50
 
 # Adjacent slices from same position
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice_1.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice_1.webp \
   --position 0.5 --slice-offset 1
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice_-1.webp \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice_-1.webp \
   --position 0.5 --slice-offset -1
 
 # High-resolution single image
-dicom-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 hires.jpg \
+idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 hires.jpg \
   --position 0.5 --image-width 512 --quality 85
 ```
 
@@ -245,7 +245,7 @@ Create a grid comparing instance(s) under multiple contrast settings.
 **SYNOPSIS**
 
 ```
-dicom-series-preview contrast-mosaic SERIESUID OUTPUT --contrast PRESET [--contrast PRESET ...] [OPTIONS]
+idc-series-preview contrast-mosaic SERIESUID OUTPUT --contrast PRESET [--contrast PRESET ...] [OPTIONS]
 ```
 
 **ARGUMENTS**
@@ -298,27 +298,27 @@ dicom-series-preview contrast-mosaic SERIESUID OUTPUT --contrast PRESET [--contr
 
 ```bash
 # Single instance, 3 contrast variations
-dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 contrasts.webp \
+idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 contrasts.webp \
   --position 0.5 \
   --contrast lung --contrast bone --contrast brain
 
 # Range of instances with 2 contrasts (2 instances × 2 contrasts = 2x2 grid)
-dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 comparison.webp \
+idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 comparison.webp \
   --start 0.3 --end 0.7 --tile-height 2 \
   --contrast ct-brain --contrast ct-abdomen
 
 # Four contrasts of middle image
-dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 four_windows.webp \
+idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 four_windows.webp \
   --position 0.5 \
   --contrast lung --contrast bone --contrast brain --contrast soft
 
 # Auto vs embedded contrast comparison
-dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 auto_vs_embedded.webp \
+idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 auto_vs_embedded.webp \
   --position 0.5 \
   --contrast auto --contrast embedded
 
 # Custom window/level comparisons
-dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 custom.webp \
+idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 custom.webp \
   --position 0.5 \
   --contrast 1500/500 --contrast 2000/300 --contrast 400/40 --contrast 350/50
 ```
@@ -340,7 +340,7 @@ Pre-build cached index files for one or more DICOM series.
 **SYNOPSIS**
 
 ```
-dicom-series-preview build-index SERIES [SERIES ...] [OPTIONS]
+idc-series-preview build-index SERIES [SERIES ...] [OPTIONS]
 ```
 
 **ARGUMENTS**
@@ -364,34 +364,27 @@ dicom-series-preview build-index SERIES [SERIES ...] [OPTIONS]
 : Only valid when exactly one series is specified.
 : Mutually exclusive with `--cache-dir`
 
-`--limit INT`
-: Limit the number of instances to process (useful for very large series).
-: Default: no limit (process all instances)
-
 **EXAMPLES**
 
 ```bash
 # Build index for single series in default cache
-dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82
+idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82
 
 # Build multiple indices in cache directory
-dicom-series-preview build-index \
+idc-series-preview build-index \
   38902e14-b11f-4548-910e-771ee757dc82 \
   45678abc-def0-1234-5678-90abcdef1234 \
   --cache-dir ~/.cache/dicom-indices
 
 # Build index with verbose output
-dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
+idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
   --cache-dir /tmp/indices -v
 
 # Build index from custom HTTP server
-dicom-series-preview build-index abc123def456 \
+idc-series-preview build-index abc123def456 \
   --root http://hospital.example.com/dicom \
   --cache-dir /tmp/indices
 
-# Limit to first 100 instances (for large series)
-dicom-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
-  --limit 100 --cache-dir ~/.cache/dicom
 ```
 
 **OUTPUT FORMAT**
@@ -454,13 +447,19 @@ Retrieve or create a DICOM series index and return its path.
 **SYNOPSIS**
 
 ```
-dicom-series-preview get-index SERIES [OPTIONS]
+idc-series-preview get-index SERIES [OPTIONS]
 ```
 
 **ARGUMENTS**
 
 `SERIES`
-: DICOM Series UID
+: DICOM Series UID or path (same formats as other commands)
+
+`OUTPUT`
+: Optional destination for the exported index. Supports:
+  - Format prefixes: `csv:/tmp/index.csv`, `jsonl:relative/path.jsonl`
+  - File extensions: `.parquet`, `.csv`, `.json`, `.jsonl` / `.ndjson`
+  - If omitted, the command prints the cached Parquet path
 
 **OPTIONS**
 
@@ -472,31 +471,42 @@ dicom-series-preview get-index SERIES [OPTIONS]
 : Directory for storing/loading index files.
 : If not specified, uses default cache location
 
+`--format {csv,json,jsonl,parquet}`
+: Force export format when `OUTPUT` is provided. Overrides prefixes/extensions.
+
 **EXAMPLES**
 
 ```bash
 # Get index path (create if doesn't exist)
-dicom-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82
+idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82
 
 # Get index path in custom cache directory
-dicom-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
+idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
   --cache-dir /tmp/my-indices
 
+# Export index as CSV using prefix syntax
+idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
+  csv:/tmp/series.csv
+
+# Export index as JSONL with explicit --format
+idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
+  /tmp/series.ndjson --format jsonl
+
 # Verbose output showing what's happening
-dicom-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 -v
+idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 -v
 ```
 
 **BEHAVIOR**
 
 1. Checks if index already exists in cache
-2. If found: returns the path immediately
-3. If not found: builds index (same as `build-index` command) and returns path
-4. Returns absolute path to `.parquet` file
-5. Useful for integrating into scripts or other tools
+2. If found: returns/exports immediately
+3. If not found: builds index (same as `build-index` command) and then exports
+4. Supports exporting as Parquet (copy), CSV, JSON (array), or JSONL/NDJSON (line-delimited)
+5. When no destination is given, prints the cached Parquet path for scripting
 
 **OUTPUT**
 
-Prints the full path to the index file, e.g.:
+Prints the full path to the cached or exported index, e.g.:
 ```
 /Users/username/.cache/dicom-indices/indices/38902e14-b11f-4548-910e-771ee757dc82_index.parquet
 ```
@@ -591,22 +601,22 @@ By default, DICOM series indices are cached after first access:
 Default locations (in order of preference):
 1. `DICOM_SERIES_PREVIEW_CACHE_DIR` environment variable
 2. Platform-specific cache directory:
-   - Linux: `~/.cache/dicom-series-preview`
-   - macOS: `~/Library/Caches/dicom-series-preview`
-   - Windows: `%APPDATA%\dicom-series-preview\cache`
+   - Linux: `~/.cache/idc-series-preview`
+   - macOS: `~/Library/Caches/idc-series-preview`
+   - Windows: `%APPDATA%\idc-series-preview\cache`
 
 ### Disabling Cache
 
 Use `--no-cache` flag to fetch fresh on every run:
 ```bash
-dicom-series-preview mosaic SERIES OUTPUT --no-cache
+idc-series-preview mosaic SERIES OUTPUT --no-cache
 ```
 
 ### Custom Cache Directory
 
 Use `--cache-dir` to specify alternative location:
 ```bash
-dicom-series-preview mosaic SERIES OUTPUT --cache-dir /tmp/my-indices
+idc-series-preview mosaic SERIES OUTPUT --cache-dir /tmp/my-indices
 ```
 
 ---
@@ -618,10 +628,10 @@ dicom-series-preview mosaic SERIES OUTPUT --cache-dir /tmp/my-indices
 Accesses public IDC bucket by default:
 ```bash
 # Uses s3://idc-open-data by default
-dicom-series-preview mosaic SERIES output.webp
+idc-series-preview mosaic SERIES output.webp
 
 # Use private bucket with credentials
-dicom-series-preview mosaic SERIES output.webp \
+idc-series-preview mosaic SERIES output.webp \
   --root s3://my-private-bucket
 ```
 
@@ -634,7 +644,7 @@ Environment variables (if credentials needed):
 
 Accesses DICOM files via HTTP:
 ```bash
-dicom-series-preview mosaic SERIES output.webp \
+idc-series-preview mosaic SERIES output.webp \
   --root http://hospital.example.com/dicom-server
 ```
 
@@ -642,11 +652,11 @@ dicom-series-preview mosaic SERIES output.webp \
 
 Uses local DICOM files:
 ```bash
-dicom-series-preview mosaic SERIES output.webp \
+idc-series-preview mosaic SERIES output.webp \
   --root /data/dicom
 
 # Or with file:// prefix
-dicom-series-preview mosaic SERIES output.webp \
+idc-series-preview mosaic SERIES output.webp \
   --root file:///data/dicom
 ```
 
@@ -667,7 +677,7 @@ dicom-series-preview mosaic SERIES output.webp \
 
 To support these, install optional gdcm dependency (Linux/Windows only):
 ```bash
-pip install dicom-series-preview[gdcm]
+pip install idc-series-preview[gdcm]
 ```
 
 ---
@@ -689,7 +699,7 @@ The tool exits with code 1 on errors:
 
 Use `--verbose/-v` for detailed error messages:
 ```bash
-dicom-series-preview mosaic SERIES output.webp -v
+idc-series-preview mosaic SERIES output.webp -v
 ```
 
 ---
@@ -749,21 +759,21 @@ dicom-series-preview mosaic SERIES output.webp -v
 
 ```bash
 uv pip install .
-uv run dicom-series-preview --help
+uv run idc-series-preview --help
 ```
 
 ### Using pip
 
 ```bash
 pip install .
-dicom-series-preview --help
+idc-series-preview --help
 ```
 
 ### Optional Dependencies
 
 For additional DICOM codec support:
 ```bash
-pip install dicom-series-preview[gdcm]
+pip install idc-series-preview[gdcm]
 ```
 
 ---
@@ -774,19 +784,19 @@ pip install dicom-series-preview[gdcm]
 
 ```bash
 # Default 6x6 mosaic
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 preview.webp
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 preview.webp
 ```
 
 ### Detailed Analysis
 
 ```bash
 # Compare contrasts at specific location
-dicom-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 analysis.webp \
+idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 analysis.webp \
   --position 0.5 \
   --contrast lung --contrast bone --contrast brain --contrast soft
 
 # View multiple slices in one image
-dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 multi_slice.webp \
+idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 multi_slice.webp \
   --tile-width 4 --tile-height 4 --image-width 192 \
   --start 0.3 --end 0.7
 ```
@@ -795,11 +805,11 @@ dicom-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 multi_slice.web
 
 ```bash
 # Build cache first
-dicom-series-preview build-index SERIES1 SERIES2 --cache-dir /cache
+idc-series-preview build-index SERIES1 SERIES2 --cache-dir /cache
 
 # Later: fast processing from cache
-dicom-series-preview mosaic SERIES1 output1.webp --cache-dir /cache
-dicom-series-preview mosaic SERIES2 output2.webp --cache-dir /cache
+idc-series-preview mosaic SERIES1 output1.webp --cache-dir /cache
+idc-series-preview mosaic SERIES2 output2.webp --cache-dir /cache
 ```
 
 ### Integration with Scripts
@@ -807,7 +817,7 @@ dicom-series-preview mosaic SERIES2 output2.webp --cache-dir /cache
 ```bash
 #!/bin/bash
 # Get index and pass to external tool
-INDEX=$(dicom-series-preview get-index $SERIES --cache-dir /cache)
+INDEX=$(idc-series-preview get-index $SERIES --cache-dir /cache)
 python analyze_dicom.py --index "$INDEX"
 ```
 
