@@ -29,7 +29,7 @@
 ### API Layer (api.py)
 
 **SeriesIndex class** uses:
-- `load_or_generate_index()` (from index_cache module) → gets Polars DataFrame with columns: {Index, PrimaryPosition, FileName, SOPInstanceUID, ...}
+- `load_or_generate_index()` (from index_cache module) → gets Polars DataFrame with columns: {Index, PrimaryPosition, DataURL, SOPInstanceUID, ...}
 - `DICOMRetriever(root_path, index_df)` → initialized once, reused
   - `get_instances(urls, headers_only)` → parallel fetch with progressive range requests
   - `get_instance_at_position(series_uid, position)` → (uid, dataset)

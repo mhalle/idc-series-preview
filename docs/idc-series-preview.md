@@ -19,6 +19,7 @@ idc-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 - **contrast-mosaic**: Create comparison grids with multiple contrast settings
 - **build-index**: Pre-build cached indices for faster access
 - **get-index**: Retrieve or create an index and return its path
+- **clear-index**: Delete cached index files
 
 The tool uses efficient retrieval strategies (headers first, then pixel data for selected instances) and supports advanced features like window/level presets, auto-contrast detection, and flexible series specification formats.
 
@@ -346,7 +347,7 @@ idc-series-preview build-index SERIES [SERIES ...] [OPTIONS]
 **ARGUMENTS**
 
 `SERIES`
-: One or more series UIDs/paths (repeatable positional arguments)
+: One or more series UIDs/paths (repeatable). Required unless using `--rebuild --all`.
 
 **OPTIONS**
 
@@ -363,6 +364,12 @@ idc-series-preview build-index SERIES [SERIES ...] [OPTIONS]
 : Output directory for a single series.
 : Only valid when exactly one series is specified.
 : Mutually exclusive with `--cache-dir`
+
+`--rebuild`
+: Force regeneration of each index even if a cached parquet already exists.
+
+`--all`
+: With `--rebuild` (and no SERIES arguments), rebuild every cached index in the cache directory.
 
 **EXAMPLES**
 
@@ -394,9 +401,8 @@ Index files are Parquet tables with one row per DICOM instance:
 **Metadata Columns**
 
 - **Index** (UInt32): Zero-based sort position (0 to N-1)
-- **FileName** (Utf8): Instance filename (derived from SOPInstanceUID)
+- **DataURL** (Utf8): Fully-qualified resource URL identifying each instance
 - **SeriesUID** (Utf8): Series UID
-- **StorageRoot** (Utf8): Storage root path
 
 **Sorting Information**
 
@@ -471,6 +477,9 @@ idc-series-preview get-index SERIES [OPTIONS]
 : Directory for storing/loading index files.
 : If not specified, uses default cache location
 
+`--rebuild`
+: Force regeneration of the cached index before exporting/printing.
+
 `--format {csv,json,jsonl,parquet}`
 : Force export format when `OUTPUT` is provided. Overrides prefixes/extensions.
 
@@ -509,6 +518,47 @@ idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 -v
 Prints the full path to the cached or exported index, e.g.:
 ```
 /Users/username/.cache/dicom-indices/indices/38902e14-b11f-4548-910e-771ee757dc82_index.parquet
+```
+
+---
+
+### clear-index
+
+Delete cached index files for specific series or the entire cache.
+
+**SYNOPSIS**
+
+```
+idc-series-preview clear-index [SERIES ...] [OPTIONS]
+```
+
+**ARGUMENTS**
+
+`SERIES`
+: Optional series UIDs/paths. If omitted, `--all` is required.
+
+**OPTIONS**
+
+`--root PATH`
+: Root path used when resolving SERIES inputs. Default: `s3://idc-open-data`
+
+`--cache-dir DIR`
+: Cache directory containing index files. Default: platform cache
+
+`--all`
+: Remove every cached index in the cache directory (cannot be combined with SERIES)
+
+`-v, --verbose`
+: Enable detailed logging of deleted files
+
+**EXAMPLES**
+
+```bash
+# Remove cache entry for a single series
+idc-series-preview clear-index 38902e14-b11f-4548-910e-771ee757dc82
+
+# Clear entire cache directory
+idc-series-preview clear-index --all --cache-dir ~/.cache/dicom-indices
 ```
 
 ---

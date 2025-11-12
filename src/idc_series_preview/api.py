@@ -413,6 +413,7 @@ class SeriesIndex:
         root: str = "s3://idc-open-data",
         cache_dir: Optional[str] = None,
         use_cache: bool = True,
+        force_rebuild: bool = False,
     ):
         """
         Initialize a series index.
@@ -468,6 +469,7 @@ class SeriesIndex:
             index_dir=cache_dir,
             logger_instance=self._logger,
             save_to_cache=use_cache,
+            force_rebuild=force_rebuild,
         )
 
         if index_df is None:
@@ -651,10 +653,9 @@ class SeriesIndex:
                 if matching.height == 0:
                     logger.warning(f"Instance {instance_uid} not found in index")
                     continue
-                filename = matching[0, "FileName"]
+                data_url = matching[0, "DataURL"]
 
-                url = f"{self._series_uid}/{filename}"
-                urls_with_pos.append((url, pos, instance_uid))
+                urls_with_pos.append((data_url, pos, instance_uid))
 
             if not urls_with_pos:
                 raise ValueError(f"Failed to locate any instances at {len(positions)} positions")
@@ -710,10 +711,9 @@ class SeriesIndex:
             urls_with_slice = []  # List of (url, slice_num, instance_uid) tuples
             for slice_num in slice_numbers:
                 row = sorted_df[slice_num]
-                filename = row["FileName"][0]
+                data_url = row["DataURL"][0]
                 instance_uid = row["SOPInstanceUID"][0]
-                url = f"{self._series_uid}/{filename}"
-                urls_with_slice.append((url, slice_num, instance_uid))
+                urls_with_slice.append((data_url, slice_num, instance_uid))
 
             # Fetch all in parallel via retriever
             urls = [url for url, _, _ in urls_with_slice]

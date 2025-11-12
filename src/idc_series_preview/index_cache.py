@@ -181,6 +181,22 @@ def get_cache_directory(cli_arg: Optional[str] = None) -> Path:
     return Path(user_cache_dir("idc-series-preview"))
 
 
+def iterate_cached_series(cache_dir: Optional[Path] = None) -> list[tuple[str, Path]]:
+    """Return (series_uid, index_path) pairs for every cached index."""
+    base_dir = cache_dir or get_cache_directory()
+    indices_dir = base_dir / "indices"
+    if not indices_dir.exists():
+        return []
+
+    pairs = []
+    for parquet_file in sorted(indices_dir.glob("*_index.parquet")):
+        name = parquet_file.name
+        if name.endswith("_index.parquet"):
+            series = name[:-len("_index.parquet")]
+            pairs.append((series, parquet_file))
+    return pairs
+
+
 def get_index_path(series_uid: str, cache_dir: Optional[Path] = None) -> Path:
     """
     Get full path to index file for a series.
@@ -370,12 +386,18 @@ def _generate_parquet_table(
     column_data = {}
     column_types = {}
 
-    # Always include Index (sort order), FileName, and primary position/axis metadata
+    # Always include Index (sort order), DataURL, and primary position/axis metadata
     column_data["Index"] = list(range(len(instance_uids)))
     column_types["Index"] = pl.UInt32
 
-    column_data["FileName"] = [f"{uid}.dcm" for uid in instance_uids]
-    column_types["FileName"] = pl.Utf8
+    normalized_root = storage_root.rstrip('/') or storage_root
+    # TODO(#local-relative-cache): for local storage roots, consider writing the
+    # cache next to the dataset (or otherwise using relative paths) so that
+    # path resolution works (and multiple projects/directories don't collide in a
+    # global cache).
+    data_urls = [f"{normalized_root}/{uid}.dcm" for uid in instance_uids]
+    column_data["DataURL"] = data_urls
+    column_types["DataURL"] = pl.Utf8
 
     # Extract PrimaryPosition and PrimaryAxis from sorting metadata
     primary_positions = []
@@ -509,7 +531,6 @@ def _generate_parquet_table(
     # Add metadata columns
     df = df.with_columns(
         pl.lit(series_uid).alias("SeriesUID"),
-        pl.lit(storage_root).alias("StorageRoot"),
     )
 
     return df
@@ -521,6 +542,7 @@ def load_or_generate_index(
     index_dir: Optional[str] = None,
     logger_instance: Optional[logging.Logger] = None,
     save_to_cache: bool = True,
+    force_rebuild: bool = False,
 ) -> Optional[pl.DataFrame]:
     """
     Load existing index or generate new one.
@@ -544,18 +566,35 @@ def load_or_generate_index(
     index_path = get_index_path(series_uid, cache_dir)
 
     # Try to load existing index (only if caching is enabled)
-    if save_to_cache and index_path.exists():
+    if save_to_cache and not force_rebuild and index_path.exists():
         log.debug(f"Loading cached index from: {index_path}")
         try:
             df = _load_index(index_path)
-            _validate_index(df, series_uid)
-            log.info(f"Index loaded: {len(df)} instances")
-            return df
+            if "DataURL" not in df.columns:
+                log.info(
+                    "Cached index is missing DataURL column; regenerating to latest schema"
+                )
+            else:
+                _validate_index(df, series_uid)
+                log.info(f"Index loaded: {len(df)} instances")
+                return df
         except (FileNotFoundError, ValueError) as e:
             log.error(f"Failed to load index: {e}")
-            return None
+
+        # Force rebuild if we couldn't load or schema was outdated
+        try:
+            index_path.unlink()
+        except FileNotFoundError:
+            pass
 
     # Index doesn't exist or caching disabled, generate it
+    if force_rebuild and index_path.exists():
+        log.info(f"Rebuilding index for series {series_uid}: removing cached file")
+        try:
+            index_path.unlink()
+        except FileNotFoundError:
+            pass
+
     log.info(f"Generating index for series {series_uid}...")
 
     try:

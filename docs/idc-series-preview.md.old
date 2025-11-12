@@ -356,6 +356,9 @@ Output Parquet file path. Must have a `.parquet` extension.
 : Root path for DICOM files (S3, HTTP, or local filesystem).
 : Default: `s3://idc-open-data`
 
+`--rebuild`
+: Force regeneration of the parquet cache even if it already exists.
+
 `-v, --verbose`
 : Enable verbose logging output.
 
@@ -365,9 +368,8 @@ The Parquet file contains one row per DICOM instance with the following columns:
 
 #### Metadata Columns
 - **Index** (UInt32): Zero-based sort index (0 to n-1) showing instance order
-- **FileName** (Utf8): Instance filename (derived from SOPInstanceUID)
+- **DataURL** (Utf8): Fully-qualified URL identifying each instance
 - **SeriesUID** (Utf8): Series UID (constant for all rows)
-- **StorageRoot** (Utf8): Storage root path (constant for all rows)
 
 #### Sorting Information
 - **PrimaryPosition** (Float32): The actual coordinate value on the primary axis

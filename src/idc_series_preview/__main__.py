@@ -723,6 +723,7 @@ def get_index_command(args, logger):
                 root=args.root,
                 cache_dir=cache_dir_str,
                 use_cache=True,
+                force_rebuild=getattr(args, 'rebuild', False),
             )
         except ValueError as e:
             logger.error(f"Failed to initialize series index: {e}")
@@ -765,6 +766,65 @@ def get_index_command(args, logger):
 
     except Exception as e:
         logger.exception(f"Error: {e}")
+        return 1
+
+
+def clear_index_command(args, logger):
+    """Delete cached index files for specified series or all cached entries."""
+    try:
+        from .index_cache import iterate_cached_series, get_index_path
+        from .series_spec import parse_and_normalize_series
+
+        cache_dir = Path(args.cache_dir) if getattr(args, 'cache_dir', None) else get_cache_directory()
+
+        if args.all:
+            if args.series:
+                logger.error("--all cannot be combined with explicit series arguments")
+                return 1
+
+            cached = iterate_cached_series(cache_dir)
+            if not cached:
+                logger.info("No cached indices found")
+                return 0
+
+            removed = 0
+            for series_uid, path in cached:
+                if path.exists():
+                    path.unlink()
+                    removed += 1
+                    if args.verbose:
+                        logger.info(f"Deleted {path}")
+
+            logger.info(f"Removed {removed} cached indices from {cache_dir}")
+            return 0
+
+        if not args.series:
+            logger.error("Specify one or more SERIES arguments or use --all")
+            return 1
+
+        removed = 0
+        for series_spec in args.series:
+            result = parse_and_normalize_series(series_spec, args.root, logger)
+            if result is None:
+                continue
+            _, series_uid = result
+            index_path = get_index_path(series_uid, cache_dir)
+            if index_path.exists():
+                index_path.unlink()
+                removed += 1
+                if args.verbose:
+                    logger.info(f"Deleted {index_path}")
+            else:
+                logger.warning(f"No cached index found for {series_uid}")
+
+        if removed == 0:
+            logger.warning("No indices were removed")
+        else:
+            logger.info(f"Removed {removed} cached indices")
+        return 0
+
+    except Exception as e:
+        logger.exception(f"Error clearing index cache: {e}")
         return 1
 
 
@@ -1022,7 +1082,25 @@ def build_index_command(args, logger):
             output_dir = get_cache_directory()
 
         cache_dir_str = str(output_dir)
-        series_list = args.series
+
+        if args.rebuild and args.all:
+            if args.series:
+                logger.error("--all cannot be combined with explicit series arguments")
+                return 1
+            from .index_cache import iterate_cached_series
+
+            cached = list(iterate_cached_series(Path(cache_dir_str)))
+            if not cached:
+                logger.error("No cached indices found to rebuild")
+                return 1
+            series_list = [series for series, _ in cached]
+            if args.verbose:
+                logger.info(f"Rebuilding {len(series_list)} cached indices")
+        else:
+            series_list = args.series
+            if not series_list:
+                logger.error("Specify at least one SERIES argument or use --rebuild --all")
+                return 1
 
         if args.verbose:
             logger.info(f"Building indices for {len(series_list)} series")
@@ -1039,6 +1117,7 @@ def build_index_command(args, logger):
                     root=args.root,
                     cache_dir=cache_dir_str,
                     use_cache=True,
+                    force_rebuild=getattr(args, 'rebuild', False),
                 )
 
                 index_path = output_dir / "indices" / f"{series_index.series_uid}_index.parquet"
@@ -1082,11 +1161,11 @@ def _setup_build_index_subcommand(subparsers):
     # Positional argument: one or more series UIDs/paths
     index_parser.add_argument(
         "series",
-        nargs="+",
+        nargs="*",
         metavar="SERIES",
         help="DICOM Series UID(s) or path(s). Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
              "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
-             "Full paths override --root parameter."
+             "Full paths override --root parameter. Required unless using --rebuild --all."
     )
 
     # Output options (mutually exclusive)
@@ -1109,6 +1188,18 @@ def _setup_build_index_subcommand(subparsers):
         "--root",
         default="s3://idc-open-data",
         help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    index_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Force regeneration of each series index even if it already exists in the cache."
+    )
+
+    index_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="When used with --rebuild (and no series arguments), rebuild every cached index in the cache directory."
     )
 
     # Utility arguments
@@ -1168,6 +1259,12 @@ def _setup_get_index_subcommand(subparsers):
     )
 
     get_index_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Force regeneration of the series index even when a cached file already exists."
+    )
+
+    get_index_parser.add_argument(
         "--format",
         choices=sorted(SUPPORTED_INDEX_FORMATS),
         help="Explicit index export format when --output is provided. "
@@ -1182,6 +1279,47 @@ def _setup_get_index_subcommand(subparsers):
     )
 
     get_index_parser.set_defaults(func=get_index_command)
+
+
+def _setup_clear_index_subcommand(subparsers):
+    """Setup clear-index subcommand to delete cached indices."""
+    clear_parser = subparsers.add_parser(
+        "clear-index",
+        help="Delete cached index files for specific series or all cached entries"
+    )
+
+    clear_parser.add_argument(
+        "series",
+        nargs="*",
+        metavar="SERIES",
+        help="Optional series UIDs/paths to remove from the cache"
+    )
+
+    clear_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path used when resolving SERIES inputs"
+    )
+
+    clear_parser.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        help="Cache directory containing index files (default: platform cache)"
+    )
+
+    clear_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove every cached index from the cache directory"
+    )
+
+    clear_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    clear_parser.set_defaults(func=clear_index_command)
 
 
 def _setup_parser():
@@ -1205,6 +1343,7 @@ def _setup_parser():
     _setup_contrast_mosaic_subcommand(subparsers)
     _setup_build_index_subcommand(subparsers)
     _setup_get_index_subcommand(subparsers)
+    _setup_clear_index_subcommand(subparsers)
 
     return parser
 

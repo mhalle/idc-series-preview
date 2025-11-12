@@ -191,6 +191,46 @@ class DICOMRetriever:
         else:
             return f"{series_uid}/{instance_uid}.dcm"
 
+    def _to_store_path(self, url: str) -> str:
+        """Convert absolute DataURL to store-relative path."""
+        if not url:
+            return url
+
+        prefix = self.root_path.rstrip('/')
+        if prefix and url.startswith(prefix + '/'):
+            return url[len(prefix) + 1:]
+
+        return url
+
+    def _get_dataset_by_url(self, url: Optional[str]) -> Optional[pydicom.Dataset]:
+        """Fetch a dataset given a fully-qualified URL/path."""
+        if not url:
+            return None
+
+        try:
+            store_path = self._to_store_path(url)
+            result = self.store.get(store_path)
+            data = bytes(result.bytes())
+            return pydicom.dcmread(BytesIO(data), force=True)
+        except NotImplementedError as e:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Skipping {url}: unsupported compression - {e}")
+            return None
+        except Exception as e:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Error retrieving {url}: {e}")
+            return None
+
+    def _fetch_dataset_by_identifier(self, identifier: str, series_uid: str) -> Optional[pydicom.Dataset]:
+        """Fetch dataset using either a DataURL or raw instance UID."""
+        if not identifier:
+            return None
+
+        if '/' in identifier or '://' in identifier:
+            return self._get_dataset_by_url(identifier)
+
+        return self.get_instance_data(series_uid, identifier)
+
     def _get_instance_headers(
         self, series_uid: str, instance_uid: str, max_bytes: int = 10000
     ) -> Tuple[Optional[pydicom.Dataset], int]:
@@ -319,7 +359,7 @@ class DICOMRetriever:
 
     def _get_sorted_instances_from_index(
         self, series_uid: str, start: float = 0.0, end: float = 1.0
-    ) -> Optional[List[str]]:
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Get sorted instance UIDs from cached index (if available).
 
@@ -331,14 +371,14 @@ class DICOMRetriever:
             end: End of normalized z-position range (0.0-1.0)
 
         Returns:
-            List of instance filenames (UIDs) sorted by position, or None if index not available
+            List of (SOPInstanceUID, DataURL) tuples sorted by position, or None if index not available
         """
         if self.index_df is None:
             return None
 
         try:
             # Filter to matching instances
-            df = self.index_df
+            df = self.index_df.sort("Index")
 
             # Apply range filtering if specified
             if start > 0.0 or end < 1.0:
@@ -363,9 +403,9 @@ class DICOMRetriever:
                         f"({start_pos:.2f} to {end_pos:.2f}) selected {len(df)} instances"
                     )
 
-            # Return filenames in sorted order (Index column should already be sorted)
-            # Use FileName column which contains the correct instance filenames
-            instances = df.select("FileName").to_series().to_list()
+            # Return tuples of (UID, DataURL)
+            rows = df.select(["SOPInstanceUID", "DataURL"]).to_dicts()
+            instances = [(row["SOPInstanceUID"], row["DataURL"]) for row in rows]
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Using cached index for {len(instances)} instances")
             return instances
@@ -397,14 +437,14 @@ class DICOMRetriever:
             instances in the range (no duplicates).
         """
         # Try to get sorted instances from cached index
-        sorted_instance_uids = None
+        sorted_instance_paths = None
         if self.index_df is not None:
-            sorted_instance_uids = self._get_sorted_instances_from_index(
+            sorted_instance_records = self._get_sorted_instances_from_index(
                 series_uid, start=start, end=end
             )
 
         # If we couldn't use the index, fall back to normal flow
-        if sorted_instance_uids is None:
+        if sorted_instance_records is None:
             all_instances = self.list_instances(series_uid)
 
             if not all_instances:
@@ -479,19 +519,19 @@ class DICOMRetriever:
                 logger.debug(f"Selected {len(selected)} instances from {len(all_headers)} total")
 
             # Extract UIDs from selected (which are now tuples of (uid, ds))
-            selected_uids = [uid for uid, ds in selected]
+            selected_records = [(uid, None) for uid, ds in selected]
         else:
             # Using cached index
-            if len(sorted_instance_uids) <= count:
-                selected_uids = sorted_instance_uids
+            if len(sorted_instance_records) <= count:
+                selected_records = sorted_instance_records
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Index has {len(sorted_instance_uids)} instances, less than requested {count}")
+                    logger.debug(f"Index has {len(sorted_instance_records)} instances, less than requested {count}")
             else:
                 # Select evenly distributed instances from sorted list
-                indices = [int(i * (len(sorted_instance_uids) - 1) / (count - 1)) for i in range(count)]
-                selected_uids = [sorted_instance_uids[i] for i in indices]
+                indices = [int(i * (len(sorted_instance_records) - 1) / (count - 1)) for i in range(count)]
+                selected_records = [sorted_instance_records[i] for i in indices]
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Selected {count} instances from cached index ({len(sorted_instance_uids)} total)")
+                    logger.debug(f"Selected {count} instances from cached index ({len(sorted_instance_records)} total)")
 
             headers_bytes = 0  # No headers retrieved when using cache
 
@@ -499,13 +539,19 @@ class DICOMRetriever:
         results = []
         pixel_bytes = 0
 
+        record_map = {uid: url for uid, url in selected_records}
+
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
-                executor.submit(self.get_instance_data, series_uid, uid): uid
-                for uid in selected_uids
+                executor.submit(
+                    self._fetch_dataset_by_identifier,
+                    record[1] if record[1] else record[0],
+                    series_uid,
+                ): record[0]
+                for record in selected_records
             }
 
-            for future in as_completed(futures):
+        for future in as_completed(futures):
                 instance_uid = futures[future]
                 try:
                     ds = future.result()
@@ -513,7 +559,12 @@ class DICOMRetriever:
                         results.append((instance_uid, ds))
                         # Count actual file size
                         try:
-                            path = self._get_instance_path(series_uid, instance_uid)
+                            identifier_for_size = None
+                            identifier_for_size = record_map.get(instance_uid)
+                            if identifier_for_size and ('/' in identifier_for_size or '://' in identifier_for_size):
+                                path = self._to_store_path(identifier_for_size)
+                            else:
+                                path = self._get_instance_path(series_uid, instance_uid)
                             meta = self.store.head(path)
                             file_size = meta.get('size') if isinstance(meta, dict) else meta.size
                             pixel_bytes += file_size
@@ -601,22 +652,20 @@ class DICOMRetriever:
                 selection_method = f"{selection_method} + offset {slice_offset} → index {target_idx}"
 
             selected_instance = sorted_instances[selected_idx]
-            instance_uid = selected_instance["SOPInstanceUID"]
-            # Use FileName from cache if available (it's the actual file path component)
-            filename = selected_instance.get("FileName")
+            data_url = selected_instance.get("DataURL")
+            instance_uid = selected_instance.get("SOPInstanceUID")
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Position {position:.1%} selected by {selection_method} (PrimaryPosition={selected_instance['PrimaryPosition']:.2f}, PrimaryAxis={selected_instance['PrimaryAxis']})")
 
             # Fetch only the pixel data for this instance
-            # Use filename from cache (e.g., "uuid.dcm") instead of SOPInstanceUID
-            full_ds = self.get_instance_data(series_uid, filename if filename else instance_uid)
+            full_ds = self._get_dataset_by_url(data_url)
 
             if full_ds is None:
-                logger.error(f"Could not retrieve pixel data for instance {filename if filename else instance_uid}")
+                logger.error("Could not retrieve pixel data for cached instance")
                 return None
 
-            return (instance_uid, full_ds)
+            return (instance_uid or data_url, full_ds)
 
         # Slow path: Fetch headers from S3 if no cache available
         all_instances = self.list_instances(series_uid)
@@ -814,38 +863,43 @@ class DICOMRetriever:
         if max_workers is None:
             max_workers = DEFAULT_MAX_WORKERS
 
-        def fetch_single(url: str) -> Tuple[str, Optional[pydicom.Dataset]]:
+        normalized_urls = [self._to_store_path(url) for url in urls]
+
+        def fetch_single(original_url: str, store_path: str) -> Tuple[str, Optional[pydicom.Dataset]]:
             """Fetch single instance, return (url, Dataset or None)."""
             try:
                 if headers_only:
-                    # Parse URL to extract series_uid and instance_uid
-                    parts = url.split('/')
+                    # Parse path to extract series and instance
+                    parts = store_path.split('/', 1)
                     if len(parts) >= 2:
                         series_uid = parts[0]
-                        instance_uid = '/'.join(parts[1:])
-                        ds, _ = self._get_instance_headers(series_uid, instance_uid)
+                        instance_part = parts[1]
+                        ds, _ = self._get_instance_headers(series_uid, instance_part)
                     else:
-                        return (url, None)
+                        return (original_url, None)
                 else:
-                    result = self.store.get(url)
+                    result = self.store.get(store_path)
                     data = bytes(result.bytes())
                     ds = pydicom.dcmread(BytesIO(data), force=True)
 
-                return (url, ds)
+                return (original_url, ds)
 
             except NotImplementedError as e:
                 # Unsupported compression
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Skipping {url}: unsupported compression - {e}")
-                return (url, None)
+                    logger.debug(f"Skipping {original_url}: unsupported compression - {e}")
+                return (original_url, None)
             except Exception as e:
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Error retrieving {url}: {e}")
-                return (url, None)
+                    logger.debug(f"Error retrieving {original_url}: {e}")
+                return (original_url, None)
 
         # Fetch in parallel
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(fetch_single, url): url for url in urls}
+            futures = {
+                executor.submit(fetch_single, url, store_path): url
+                for url, store_path in zip(urls, normalized_urls)
+            }
             results = []
 
             for future in as_completed(futures):
