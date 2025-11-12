@@ -11,7 +11,7 @@ from PIL import Image
 from .series_spec import parse_and_normalize_series
 from .index_cache import load_or_generate_index
 from .retriever import DICOMRetriever
-from .image_utils import MosaicGenerator
+from .image_utils import InstanceRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -233,18 +233,18 @@ class Instance:
         ValueError
             If image rendering fails
         """
-        # Normalize contrast to dict format that MosaicGenerator expects
+        # Normalize contrast to dict format that the renderer expects
         window_settings = self._normalize_contrast(contrast)
 
         # Create generator with these settings
-        generator = MosaicGenerator(
+        renderer = InstanceRenderer(
             image_width=image_width,
             window_settings=window_settings,
         )
 
-        # Render image
-        img = generator.create_single_image(
-            (self.instance_uid, self.dataset),
+        img = renderer.render_instance(
+            self.dataset,
+            instance_uid=self.instance_uid,
             retriever=self._series_index._get_or_create_retriever(),
             series_uid=self._series_index.series_uid,
         )
@@ -837,7 +837,13 @@ class SeriesIndex:
             rendering fails.
         """
         instance = self.get_instance(position=position, slice_number=slice_number)
-        return instance.get_image(contrast=contrast, image_width=image_width)
+        from .image_utils import InstanceRenderer
+
+        renderer = InstanceRenderer(image_width=image_width, window_settings=contrast)
+        img = renderer.render_instance(instance.dataset)
+        if img is None:
+            raise ValueError("Failed to render image for selected instance")
+        return img
 
     def get_images(
         self,
@@ -898,16 +904,17 @@ class SeriesIndex:
             headers_only=False,  # Need full data for rendering
         )
 
-        # Render instances sequentially (rendering is CPU-bound, not I/O-bound)
+        from .image_utils import InstanceRenderer
+
+        renderer = InstanceRenderer(image_width=image_width, window_settings=contrast)
         images = []
         for instance in instances:
-            try:
-                image = instance.get_image(contrast=contrast, image_width=image_width)
-                images.append(image)
-            except Exception as e:
-                logger.warning(f"Failed to render image for {instance.instance_uid}: {e}")
-                raise
-
+            img = renderer.render_instance(instance.dataset)
+            if img is None:
+                raise ValueError(
+                    f"Failed to render image for {instance.instance_uid}"
+                )
+            images.append(img)
         return images
 
     def __repr__(self) -> str:

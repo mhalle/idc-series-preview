@@ -2,7 +2,7 @@
 
 from .series_spec import normalize_series_uid, parse_series_specification
 from .retriever import DICOMRetriever
-from .image_utils import MosaicGenerator
+from .image_utils import MosaicRenderer, InstanceRenderer
 from .contrast import ContrastPresets
 from .slice_sorting import sort_slices, SliceParameterization
 from .api import SeriesIndex, Contrast, Instance, PositionInterpolator
@@ -12,7 +12,8 @@ __all__ = [
     "normalize_series_uid",
     "parse_series_specification",
     "DICOMRetriever",
-    "MosaicGenerator",
+    "MosaicRenderer",
+    "InstanceRenderer",
     "ContrastPresets",
     "sort_slices",
     "SliceParameterization",

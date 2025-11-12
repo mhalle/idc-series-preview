@@ -12,7 +12,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from .image_utils import MosaicGenerator, save_image
+from .image_utils import MosaicRenderer, save_image
 from .contrast import ContrastPresets
 from .index_cache import get_cache_directory
 from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_MOSAIC_TILE_SIZE, DEFAULT_IMAGE_QUALITY
@@ -352,27 +352,34 @@ def mosaic_command(args, logger):
             logger.debug(f"Using {mosaic_workers} workers for {num_images} images")
 
         try:
-            images = series_index.get_images(
+            instances = series_index.get_instances(
                 positions=positions,
-                contrast=window_settings,
-                image_width=args.image_width,
                 max_workers=mosaic_workers,
+                headers_only=False,
             )
         except ValueError as e:
-            logger.error(f"Failed to retrieve images: {e}")
+            logger.error(f"Failed to retrieve instances: {e}")
             return 1
 
-        if not images:
-            logger.error(f"No images retrieved for series")
+        if not instances:
+            logger.error("No instances retrieved for series")
             return 1
 
-        if args.verbose:
-            logger.info(f"Retrieved {len(images)} images")
+        from .image_utils import InstanceRenderer, MosaicRenderer
 
-        # Tile the images into mosaic
+        renderer = InstanceRenderer(image_width=args.image_width, window_settings=window_settings)
+        images = []
+        for instance in instances:
+            img = renderer.render_instance(instance.dataset)
+            if img is None:
+                logger.error(f"Failed to render image for instance {instance.instance_uid}")
+                return 1
+            images.append(img)
+
         if args.verbose:
+            logger.info(f"Retrieved and rendered {len(images)} images")
             logger.info("Tiling images into mosaic...")
-        generator = MosaicGenerator(
+        generator = MosaicRenderer(
             tile_width=args.tile_width,
             tile_height=tile_height,
             image_width=args.image_width,
@@ -467,12 +474,11 @@ def image_command(args, logger):
         if args.verbose:
             logger.info("Generating image...")
         try:
-            # Use natural size (large default) if no width specified
+            from .image_utils import InstanceRenderer
+
             image_width = args.image_width if args.image_width is not None else 2048
-            output_image = instance.get_image(
-                contrast=window_settings,
-                image_width=image_width,
-            )
+            renderer = InstanceRenderer(image_width=image_width, window_settings=window_settings)
+            output_image = renderer.render_instance(instance.dataset)
         except ValueError as e:
             logger.error(f"Failed to generate image: {e}")
             return 1
@@ -639,21 +645,13 @@ def contrast_mosaic_command(args, logger):
             if args.verbose:
                 logger.info(f"Retrieved {len(instances)} instances")
 
-        # Grid layout: contrasts on x-axis, instances on y-axis
-        num_contrasts = len(parsed_contrasts)
-        generator = MosaicGenerator(
-            tile_width=num_contrasts,
-            tile_height=tile_height,
-            image_width=args.image_width
-        )
+        from .image_utils import InstanceRenderer, MosaicRenderer
 
         if args.verbose:
             logger.info(f"Grid layout: {num_contrasts}x{tile_height} (contrasts x instances)")
             logger.info("Generating contrast grid...")
 
-        # Create images: for each instance, apply all contrasts
-        # Store in row-major order: all contrasts for instance 0, then all for instance 1, etc.
-        all_images = []
+        image_grid = []
         for inst_idx, instance in enumerate(instances):
             for contrast_idx, contrast_settings in enumerate(parsed_contrasts):
                 contrast_str = args.contrast[contrast_idx]
@@ -663,21 +661,25 @@ def contrast_mosaic_command(args, logger):
                         f"contrast {contrast_idx+1}/{num_contrasts}: {contrast_str}"
                     )
 
-                try:
-                    img = instance.get_image(
-                        contrast=contrast_settings,
-                        image_width=args.image_width,
+                renderer = InstanceRenderer(
+                    image_width=args.image_width,
+                    window_settings=contrast_settings,
+                )
+                img = renderer.render_instance(instance.dataset)
+                if img is None:
+                    logger.error(
+                        f"Failed to render instance {inst_idx+1} contrast {contrast_str}"
                     )
-                    if not img:
-                        logger.error(f"Failed to generate image for instance {inst_idx+1}, contrast {contrast_str}")
-                        return 1
-                    all_images.append(img)
-                except ValueError as e:
-                    logger.error(f"Failed to generate image for instance {inst_idx+1}, contrast {contrast_str}: {e}")
                     return 1
+                image_grid.append(img)
 
-        # Tile the images into grid
-        output_image = generator.tile_images(all_images)
+        generator = MosaicRenderer(
+            tile_width=num_contrasts,
+            tile_height=tile_height,
+            image_width=args.image_width,
+        )
+
+        output_image = generator.tile_images(image_grid)
 
         if not output_image:
             logger.error("Failed to tile images into grid")
