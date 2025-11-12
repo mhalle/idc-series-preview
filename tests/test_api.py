@@ -817,6 +817,35 @@ class TestPositionInterpolator:
         assert interp.position_to_index(0.5, slice_offset=100) == 5099
         assert interp.position_to_index(0.5, slice_offset=-100) == 4899
 
+    def test_interpolate_unique_limits_duplicates(self):
+        """interpolate_unique should drop slices that map to same index."""
+        interp = PositionInterpolator(instance_count=10)
+
+        positions, indices = interp.interpolate_unique(
+            num_positions=50,
+            start=0.0,
+            end=0.3,
+        )
+
+        assert len(indices) == len(set(indices))
+        # 0.3 * (10-1) -> indices 0-2 inclusive
+        assert indices == [0, 1, 2]
+        assert len(positions) == 3
+
+    def test_interpolate_unique_full_range_matches_requested(self):
+        """When enough slices exist, interpolate_unique honors request."""
+        interp = PositionInterpolator(instance_count=10)
+
+        positions, indices = interp.interpolate_unique(
+            num_positions=4,
+            start=0.0,
+            end=1.0,
+        )
+
+        assert len(indices) == 4
+        assert indices[0] == 0
+        assert indices[-1] == 9
+
     def test_position_to_index_consistent_with_get_instance(self):
         """Test that position_to_index is consistent with get_instance usage."""
         index = SeriesIndex(TEST_SERIES_UID, root=TEST_S3_ROOT)

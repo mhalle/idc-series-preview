@@ -61,7 +61,7 @@ When a prefix or full path is used, it's automatically resolved to the complete 
 
 ### Contrast Options
 
-`--contrast PRESET`
+`-c/--contrast PRESET`
 : Contrast/window-level settings. Repeatable for contrast-mosaic command.
 : Can be one of:
   - **Presets**: `ct-lung`, `ct-bone`, `ct-brain`, `ct-abdomen`, `ct-liver`, `ct-mediastinum`, `ct-soft-tissue`
@@ -79,7 +79,7 @@ When a prefix or full path is used, it's automatically resolved to the complete 
 
 `--no-cache`
 : Disable index caching. Fetches DICOM headers fresh from storage every run.
-: By default caching is enabled using `DICOM_SERIES_PREVIEW_CACHE_DIR` environment variable or platform cache directory
+: By default caching is enabled using `IDC_SERIES_PREVIEW_CACHE_DIR` environment variable or platform cache directory
 
 ### Quality Options
 
@@ -124,6 +124,9 @@ idc-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
 `--tile-height HEIGHT`
 : Number of images per column in the mosaic grid.
 : Default: Same as `--tile-width`
+: If the requested range doesn't contain enough unique slices to fill the
+  grid, idc-series-preview automatically reduces the mosaic height so rows
+  aren't filled with duplicate images.
 
 `--start POSITION`
 : Start of normalized z-position range (0.0-1.0). 0.0 is superior (head), 1.0 is inferior (tail).
@@ -246,7 +249,7 @@ Create a grid comparing instance(s) under multiple contrast settings.
 **SYNOPSIS**
 
 ```
-idc-series-preview contrast-mosaic SERIESUID OUTPUT --contrast PRESET [--contrast PRESET ...] [OPTIONS]
+idc-series-preview contrast-mosaic SERIESUID OUTPUT -c/--contrast PRESET [-c/--contrast PRESET ...] [OPTIONS]
 ```
 
 **ARGUMENTS**
@@ -283,10 +286,13 @@ idc-series-preview contrast-mosaic SERIESUID OUTPUT --contrast PRESET [--contras
 : Number of instances per column (rows).
 : Only used with `--start`/`--end`.
 : Default: `2`
+: If the requested range contains fewer unique slices than `HEIGHT`,
+  idc-series-preview automatically reduces the number of rows instead of
+  repeating identical images.
 
 **Contrast Settings:**
 
-`--contrast PRESET` (required, repeatable)
+`-c/--contrast PRESET` (required, repeatable)
 : One or more contrast presets (repeatable flag).
 : Each preset creates a column in the output grid.
 : See Contrast Options in COMMON OPTIONS for valid presets.
@@ -611,7 +617,7 @@ Applied after position mapping:
 
 Contrast is determined in this priority order:
 
-1. **Command-line**: `--contrast` argument (highest priority)
+1. **Command-line**: `-c/--contrast` argument (highest priority)
 2. **DICOM file**: WindowWidth/WindowCenter in header (if available)
 3. **Auto-detection**: Calculated from pixel statistics (2nd-98th percentile)
 
@@ -649,7 +655,7 @@ By default, DICOM series indices are cached after first access:
 ### Cache Location
 
 Default locations (in order of preference):
-1. `DICOM_SERIES_PREVIEW_CACHE_DIR` environment variable
+1. `IDC_SERIES_PREVIEW_CACHE_DIR` environment variable
 2. Platform-specific cache directory:
    - Linux: `~/.cache/idc-series-preview`
    - macOS: `~/Library/Caches/idc-series-preview`
@@ -763,7 +769,7 @@ idc-series-preview mosaic SERIES output.webp -v
 
 ## ENVIRONMENT
 
-`DICOM_SERIES_PREVIEW_CACHE_DIR`
+`IDC_SERIES_PREVIEW_CACHE_DIR`
 : Override default cache directory for indices
 
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`

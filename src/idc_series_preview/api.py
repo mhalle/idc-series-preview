@@ -91,6 +91,48 @@ class PositionInterpolator:
 
         return positions
 
+    def interpolate_unique(
+        self,
+        num_positions: int,
+        start: float = 0.0,
+        end: float = 1.0,
+    ) -> tuple[list[float], list[int]]:
+        """Return evenly spaced positions deduplicated by slice index.
+
+        Useful when requesting many samples over a tiny range: instead of
+        repeating the same slice multiple times, this method collapses the
+        selection to the unique slice indices available between ``start`` and
+        ``end``.
+
+        Returns
+        -------
+        (positions, indices)
+            positions: list of normalized positions (subset of interpolate())
+            indices: corresponding zero-indexed slice numbers
+        """
+        positions = self.interpolate(num_positions, start=start, end=end)
+
+        start_idx = self.position_to_index(start)
+        end_idx = self.position_to_index(end)
+        max_unique = max(1, end_idx - start_idx + 1)
+
+        unique_positions: list[float] = []
+        unique_indices: list[int] = []
+        seen_indices: set[int] = set()
+
+        for pos in positions:
+            idx = self.position_to_index(pos)
+            if idx in seen_indices:
+                continue
+            seen_indices.add(idx)
+            unique_positions.append(pos)
+            unique_indices.append(idx)
+
+            if len(unique_positions) >= max_unique:
+                break
+
+        return unique_positions, unique_indices
+
     def position_to_index(
         self, position: float, slice_offset: int = 0
     ) -> int:

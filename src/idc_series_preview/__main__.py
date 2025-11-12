@@ -9,6 +9,7 @@ and visualization. Supports both tiled mosaics and individual image extraction.
 import argparse
 import sys
 import logging
+import math
 import shutil
 from pathlib import Path
 
@@ -62,7 +63,7 @@ def add_common_arguments(parser):
 
     # Contrast parameters (shared)
     parser.add_argument(
-        "--contrast",
+        "-c", "--contrast",
         help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
              "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
              "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
@@ -117,7 +118,7 @@ def add_cache_arguments(parser):
         "--no-cache",
         action="store_true",
         help="Disable index caching. Fetches headers fresh from storage on every run. "
-             "By default, caching is enabled using DICOM_SERIES_PREVIEW_CACHE_DIR env var "
+             "By default, caching is enabled using IDC_SERIES_PREVIEW_CACHE_DIR env var "
              "or platform-specific cache directory."
     )
 
@@ -305,8 +306,16 @@ def mosaic_command(args, logger):
             logger.error("--start must be less than or equal to --end")
             return 1
 
-        # Determine tile height
-        tile_height = args.tile_height if args.tile_height else args.tile_width
+        # Determine tile dimensions
+        tile_width = max(1, args.tile_width)
+        if args.tile_height is not None and args.tile_height < 1:
+            logger.error("--tile-height must be >= 1 when provided")
+            return 1
+        tile_height = args.tile_height if args.tile_height else tile_width
+
+        if tile_width < 1:
+            logger.error("--tile-width must be >= 1")
+            return 1
 
         # Get window/center settings
         window_settings = _get_window_settings_from_args(args)
@@ -315,7 +324,7 @@ def mosaic_command(args, logger):
             logger.info(f"Generating DICOM series mosaic")
             logger.info(f"Series UID: {args.seriesuid}")
             logger.info(f"Root: {args.root}")
-            logger.info(f"Tile grid: {args.tile_width}x{tile_height}")
+            logger.info(f"Tile grid: {tile_width}x{tile_height}")
             logger.info(f"Tile width: {args.image_width}px")
             if args.start > 0.0 or args.end < 1.0:
                 logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
@@ -337,19 +346,39 @@ def mosaic_command(args, logger):
         if args.verbose:
             logger.info(f"Series has {series_index.instance_count} instances")
 
-        # Generate evenly-spaced positions for the mosaic
-        num_images = args.tile_width * tile_height
+        # Generate evenly-spaced positions for the mosaic, removing duplicates
+        requested_tiles = tile_width * tile_height
         interp = PositionInterpolator(series_index.instance_count)
-        positions = interp.interpolate(num_images, start=args.start, end=args.end)
+        positions, _ = interp.interpolate_unique(
+            requested_tiles,
+            start=args.start,
+            end=args.end,
+        )
+
+        if not positions:
+            logger.error(
+                "Requested range did not produce any slices. Verify --start/--end."
+            )
+            return 1
+
+        unique_count = len(positions)
+        effective_tile_height = max(1, math.ceil(unique_count / tile_width))
+
+        if args.verbose and unique_count < requested_tiles:
+            logger.info(
+                "Range %.1f%%-%.1f%% provides %d unique slices; "
+                "shrinking mosaic height to %d rows"
+                % (args.start * 100, args.end * 100, unique_count, effective_tile_height)
+            )
 
         # Retrieve and render images
         if args.verbose:
             logger.info(f"Retrieving and rendering {len(positions)} images...")
 
         # Optimize worker count for this mosaic size (min 5, max 10)
-        mosaic_workers = optimal_workers(num_images, max_workers=10, min_workers=5)
+        mosaic_workers = optimal_workers(len(positions), max_workers=10, min_workers=5)
         if args.verbose:
-            logger.debug(f"Using {mosaic_workers} workers for {num_images} images")
+            logger.debug(f"Using {mosaic_workers} workers for {len(positions)} images")
 
         try:
             instances = series_index.get_instances(
@@ -380,8 +409,8 @@ def mosaic_command(args, logger):
             logger.info(f"Retrieved and rendered {len(images)} images")
             logger.info("Tiling images into mosaic...")
         generator = MosaicRenderer(
-            tile_width=args.tile_width,
-            tile_height=tile_height,
+            tile_width=tile_width,
+            tile_height=effective_tile_height,
             image_width=args.image_width,
         )
 
@@ -535,7 +564,7 @@ def contrast_mosaic_command(args, logger):
 
         # Validate contrast settings
         if not args.contrast or len(args.contrast) == 0:
-            logger.error("At least one --contrast setting is required")
+            logger.error("At least one -c/--contrast setting is required")
             return 1
 
         parsed_contrasts = []
@@ -546,6 +575,8 @@ def contrast_mosaic_command(args, logger):
             except ValueError as e:
                 logger.error(f"Invalid contrast argument: {e}")
                 return 1
+
+        num_contrasts = len(parsed_contrasts)
 
         # Create SeriesIndex with optional cache support
         try:
@@ -563,7 +594,7 @@ def contrast_mosaic_command(args, logger):
 
         # Determine instance selection mode
         instances = []
-        tile_height = args.tile_height
+        tile_height = args.tile_height if args.tile_height and args.tile_height > 0 else 1
 
         if has_position:
             # Single position mode
@@ -622,12 +653,30 @@ def contrast_mosaic_command(args, logger):
                 logger.info(f"Series UID: {args.seriesuid}")
                 logger.info(f"Root: {args.root}")
                 logger.info(f"Range: {args.start:.1%} to {args.end:.1%}")
-                logger.info(f"Tile height (instances): {tile_height}")
+                logger.info(f"Requested tile height (instances): {tile_height}")
                 logger.info(f"Contrast variations: {len(parsed_contrasts)}")
 
-            # Generate evenly-spaced positions across range
+            # Generate evenly-spaced positions across range, removing duplicates
             interp = PositionInterpolator(series_index.instance_count)
-            positions = interp.interpolate(tile_height, start=args.start, end=args.end)
+            positions, _ = interp.interpolate_unique(
+                tile_height,
+                start=args.start,
+                end=args.end,
+            )
+
+            if not positions:
+                logger.error(
+                    "Requested range did not produce any slices. Verify --start/--end."
+                )
+                return 1
+
+            effective_height = len(positions)
+            if args.verbose and effective_height < tile_height:
+                logger.info(
+                    "Range %.1f%%-%.1f%% provides %d unique slices; "
+                    "shrinking grid height to %d rows"
+                    % (args.start * 100, args.end * 100, effective_height, effective_height)
+                )
 
             # Retrieve instances at positions
             if args.verbose:
@@ -641,6 +690,8 @@ def contrast_mosaic_command(args, logger):
             if not instances:
                 logger.error(f"No DICOM instances found in range {args.start:.1%}-{args.end:.1%}")
                 return 1
+
+            tile_height = len(instances)
 
             if args.verbose:
                 logger.info(f"Retrieved {len(instances)} instances")
@@ -900,7 +951,7 @@ def _setup_image_subcommand(subparsers):
 
     # Contrast parameters
     image_parser.add_argument(
-        "--contrast",
+        "-c", "--contrast",
         help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
              "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
              "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
@@ -1024,13 +1075,13 @@ def _setup_contrast_mosaic_subcommand(subparsers):
 
     # Contrast settings (repeatable, always horizontal)
     contrast_parser.add_argument(
-        "--contrast",
+        "-c", "--contrast",
         action="append",
         help="Contrast settings (repeatable, x-axis): CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
              "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
              "shortcut (soft, media, t1, t2, proton), 'auto', 'embedded', or custom window/level. "
              "Formats: '1500/500' (slash, medical standard) or '1500,500' (comma). "
-             "Negative values supported (e.g., '1500/-500'). At least one --contrast is required."
+             "Negative values supported (e.g., '1500/-500'). At least one -c/--contrast is required."
     )
 
     # Output format arguments
