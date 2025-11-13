@@ -11,6 +11,7 @@ import sys
 import logging
 import math
 import shutil
+import json
 from pathlib import Path
 
 from .image_utils import MosaicRenderer, save_image
@@ -20,7 +21,7 @@ from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_MOSAIC_TILE_SIZE, DEFAULT_IM
 from .workers import optimal_workers
 
 
-SUPPORTED_INDEX_FORMATS = {"parquet", "csv", "json", "jsonl"}
+SUPPORTED_INDEX_FORMATS = {"parquet", "json", "jsonl"}
 
 
 def setup_logging(verbose=False):
@@ -143,8 +144,6 @@ def _infer_format_from_suffix(path: Path):
     suffix = path.suffix.lower()
     if suffix == ".parquet":
         return "parquet"
-    if suffix == ".csv":
-        return "csv"
     if suffix == ".json":
         return "json"
     if suffix in (".jsonl", ".ndjson"):
@@ -802,9 +801,7 @@ def get_index_command(args, logger):
                 shutil.copy2(index_path, export_path)
             else:
                 df = series_index.index_dataframe
-                if export_format == "csv":
-                    df.write_csv(str(export_path))
-                elif export_format == "json":
+                if export_format == "json":
                     df.write_json(str(export_path))
                 elif export_format == "jsonl":
                     df.write_ndjson(str(export_path))
@@ -1290,8 +1287,8 @@ def _setup_get_index_subcommand(subparsers):
         "output",
         nargs="?",
         metavar="OUTPUT",
-        help="Optional destination for the index. Supports format prefixes such as 'csv:/tmp/out.csv' "
-             "or paths whose extension implies the format (parquet, csv, json, jsonl)."
+        help="Optional destination for the index. Supports format prefixes such as 'jsonl:/tmp/out.jsonl' "
+             "or paths whose extension implies the format (parquet, json, jsonl)."
     )
 
     # Storage arguments
