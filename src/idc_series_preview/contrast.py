@@ -31,61 +31,17 @@ class ContrastPresets:
         return cls._TANH_LUT
 
     PRESET_DEFINITIONS: List[Dict[str, object]] = [
-        {
-            "names": ["ct-lung", "lung"],
-            "window_width": 1500,
-            "window_center": -500,
-        },
-        {
-            "names": ["ct-bone", "bone"],
-            "window_width": 2000,
-            "window_center": 300,
-        },
-        {
-            "names": ["ct-abdomen", "abdomen"],
-            "window_width": 350,
-            "window_center": 50,
-        },
-        {
-            "names": ["ct-brain", "brain"],
-            "window_width": 80,
-            "window_center": 40,
-        },
-        {
-            "names": ["ct-mediastinum", "mediastinum", "media"],
-            "window_width": 350,
-            "window_center": 50,
-        },
-        {
-            "names": ["ct-vascular", "vascular"],
-            "window_width": 700,
-            "window_center": 200,
-        },
-        {
-            "names": ["ct-liver", "liver"],
-            "window_width": 150,
-            "window_center": 30,
-        },
-        {
-            "names": ["ct-soft-tissue", "soft-tissue", "soft"],
-            "window_width": 400,
-            "window_center": 50,
-        },
-        {
-            "names": ["mr-t1", "t1"],
-            "window_width": 700,
-            "window_center": 300,
-        },
-        {
-            "names": ["mr-t2", "t2"],
-            "window_width": 475,
-            "window_center": 155,
-        },
-        {
-            "names": ["mr-proton", "proton"],
-            "window_width": 920,
-            "window_center": 420,
-        },
+        {"names": ["ct-lung", "lung"], "window_width": 1500, "window_center": -500},
+        {"names": ["ct-bone", "bone"], "window_width": 2000, "window_center": 300},
+        {"names": ["ct-abdomen", "abdomen"], "window_width": 350, "window_center": 50},
+        {"names": ["ct-brain", "brain"], "window_width": 80, "window_center": 40},
+        {"names": ["ct-mediastinum", "mediastinum", "media"], "window_width": 350, "window_center": 50},
+        {"names": ["ct-vascular", "vascular"], "window_width": 700, "window_center": 200},
+        {"names": ["ct-liver", "liver"], "window_width": 150, "window_center": 30},
+        {"names": ["ct-soft-tissue", "soft-tissue", "soft"], "window_width": 400, "window_center": 50},
+        {"names": ["mr-t1", "t1"], "window_width": 700, "window_center": 300},
+        {"names": ["mr-t2", "t2"], "window_width": 475, "window_center": 155},
+        {"names": ["mr-proton", "proton"], "window_width": 920, "window_center": 420},
     ]
 
     PRESETS: Dict[str, Dict[str, float]] = {}
