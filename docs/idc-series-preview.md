@@ -23,6 +23,8 @@ idc-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 
 The tool uses efficient retrieval strategies (headers first, then pixel data for selected instances) and supports advanced features like window/level presets, auto-contrast detection, and flexible series specification formats.
 
+> **Testing scope:** The CLI is validated against Imaging Data Commons (IDC) datasets. HTTP and local filesystem sources are provided for convenience but are not part of the regular test matrix.
+
 ## COMMON OPTIONS
 
 These options apply to most subcommands (where applicable):
@@ -51,6 +53,7 @@ When a prefix or full path is used, it's automatically resolved to the complete 
   - `s3://my-private-bucket/dicom`
   - `http://hospital.example.com/dicom-server`
   - `/data/dicom` or `file:///data/dicom` (local)
+: Note: only IDC (S3) paths are officially tested today; HTTP and local paths are experimental.
 
 ### Image Output Options
 
