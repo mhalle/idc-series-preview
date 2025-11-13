@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "idc-series-preview"
-version = "0.5.1"
+version = "0.5.2"
 description = "Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization"
 readme = "README.md"
 requires-python = ">=3.9"

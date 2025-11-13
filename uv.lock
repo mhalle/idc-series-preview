@@ -338,7 +338,7 @@ wheels = [
 
 [[package]]
 name = "idc-series-preview"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
