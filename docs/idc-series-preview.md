@@ -117,11 +117,11 @@ idc-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
 
 **OPTIONS**
 
-`--tile-width WIDTH`
+`-t/--tile-width WIDTH`
 : Number of images per row in the mosaic grid.
 : Default: `6`
 
-`--tile-height HEIGHT`
+`-t/--tile-height HEIGHT`
 : Number of images per column in the mosaic grid.
 : Default: Same as `--tile-width`
 : If the requested range doesn't contain enough unique slices to fill the
@@ -282,7 +282,7 @@ idc-series-preview contrast-mosaic SERIESUID OUTPUT -c/--contrast PRESET [-c/--c
 : End of z-position range (0.0-1.0).
 : Default: `1.0`
 
-`--tile-height HEIGHT`
+`-t/--tile-height HEIGHT`
 : Number of instances per column (rows).
 : Only used with `--start`/`--end`.
 : Default: `2`

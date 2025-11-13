@@ -896,7 +896,7 @@ def _setup_mosaic_subcommand(subparsers):
     add_range_arguments(mosaic_parser)
     add_cache_arguments(mosaic_parser)
     mosaic_parser.add_argument(
-        "--tile-width",
+        "-t", "--tile-width",
         type=int,
         default=DEFAULT_MOSAIC_TILE_SIZE,
         help=f"Number of images per row in mosaic. Default: {DEFAULT_MOSAIC_TILE_SIZE}"
@@ -1067,7 +1067,7 @@ def _setup_contrast_mosaic_subcommand(subparsers):
 
     # Vertical tiling (instances)
     contrast_parser.add_argument(
-        "--tile-height",
+        "-t", "--tile-height",
         type=int,
         default=2,
         help="Number of instances per column (y-axis). Only used with --start/--end. Default: 2"

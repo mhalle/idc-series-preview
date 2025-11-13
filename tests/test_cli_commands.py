@@ -1,3 +1,4 @@
+import argparse
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,8 @@ from idc_series_preview.__main__ import (
     build_index_command,
     contrast_mosaic_command,
     get_index_command,
+    _setup_contrast_mosaic_subcommand,
+    _setup_mosaic_subcommand,
     mosaic_command,
 )
 
@@ -229,3 +232,35 @@ def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
     renderer = RecordingGridRenderer.created[-1]
     assert renderer.tile_height == 2
     assert len(renderer.images) == 4
+
+
+def _build_single_command_parser(setup_fn):
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.required = True
+    setup_fn(subparsers)
+    return parser
+
+
+def test_mosaic_short_flag_parses_tile_width():
+    parser = _build_single_command_parser(_setup_mosaic_subcommand)
+    args = parser.parse_args(["mosaic", "series", "out.webp", "-t", "7"])
+    assert args.tile_width == 7
+
+
+def test_contrast_mosaic_short_flag_parses_tile_height():
+    parser = _build_single_command_parser(_setup_contrast_mosaic_subcommand)
+    args = parser.parse_args([
+        "contrast-mosaic",
+        "series",
+        "out.webp",
+        "-c",
+        "lung",
+        "--start",
+        "0.0",
+        "--end",
+        "0.5",
+        "-t",
+        "3",
+    ])
+    assert args.tile_height == 3
