@@ -1,7 +1,7 @@
 """DICOM window/level (contrast) presets."""
 
 import logging
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 import numpy as np
 
 
@@ -30,77 +30,79 @@ class ContrastPresets:
             cls._TANH_LUT = lut
         return cls._TANH_LUT
 
-    PRESETS: Dict[str, Dict[str, float]] = {
-        # CT Lung
-        "ct-lung": {
+    PRESET_DEFINITIONS: List[Dict[str, object]] = [
+        {
+            "names": ["ct-lung", "lung"],
             "window_width": 1500,
             "window_center": -500,
         },
-        # CT Bone
-        "ct-bone": {
+        {
+            "names": ["ct-bone", "bone"],
             "window_width": 2000,
             "window_center": 300,
         },
-        # CT Abdomen
-        "ct-abdomen": {
+        {
+            "names": ["ct-abdomen", "abdomen"],
             "window_width": 350,
             "window_center": 50,
         },
-        # CT Brain
-        "ct-brain": {
+        {
+            "names": ["ct-brain", "brain"],
             "window_width": 80,
             "window_center": 40,
         },
-        # CT Mediastinum
-        "ct-mediastinum": {
+        {
+            "names": ["ct-mediastinum", "mediastinum", "media"],
             "window_width": 350,
             "window_center": 50,
         },
-        # CT Liver
-        "ct-liver": {
+        {
+            "names": ["ct-vascular", "vascular"],
+            "window_width": 700,
+            "window_center": 200,
+        },
+        {
+            "names": ["ct-liver", "liver"],
             "window_width": 150,
             "window_center": 30,
         },
-        # CT Soft tissue
-        "ct-soft-tissue": {
+        {
+            "names": ["ct-soft-tissue", "soft-tissue", "soft"],
             "window_width": 400,
             "window_center": 50,
         },
-        # MR T1
-        "mr-t1": {
+        {
+            "names": ["mr-t1", "t1"],
             "window_width": 700,
             "window_center": 300,
         },
-        # MR T2
-        "mr-t2": {
+        {
+            "names": ["mr-t2", "t2"],
             "window_width": 475,
             "window_center": 155,
         },
-        # MR Proton density
-        "mr-proton": {
+        {
+            "names": ["mr-proton", "proton"],
             "window_width": 920,
             "window_center": 420,
         },
-    }
+    ]
 
-    # Shortcut aliases for preset names (backward compatibility + convenience)
-    SHORTCUTS: Dict[str, str] = {
-        # CT shortcuts (backward compatibility)
-        "lung": "ct-lung",
-        "bone": "ct-bone",
-        "brain": "ct-brain",
-        "abdomen": "ct-abdomen",
-        "mediastinum": "ct-mediastinum",
-        "liver": "ct-liver",
-        "soft-tissue": "ct-soft-tissue",
-        # CT convenience shortcuts
-        "soft": "ct-soft-tissue",
-        "media": "ct-mediastinum",
-        # MR shortcuts
-        "t1": "mr-t1",
-        "t2": "mr-t2",
-        "proton": "mr-proton",
-    }
+    PRESETS: Dict[str, Dict[str, float]] = {}
+    SHORTCUTS: Dict[str, str] = {}
+
+    for definition in PRESET_DEFINITIONS:
+        names = definition.get("names", [])
+        if not names:
+            continue
+        canonical = names[0].lower()
+        preset_values = {
+            "window_width": definition["window_width"],
+            "window_center": definition["window_center"],
+        }
+        PRESETS[canonical] = preset_values
+        for alias in names[1:]:
+            SHORTCUTS[alias.lower()] = canonical
 
     @classmethod
     def get_preset(cls, name: str) -> Optional[Dict[str, float]]:
