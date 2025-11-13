@@ -4,9 +4,9 @@ DICOM series index caching and management.
 Provides tools to load, validate, and use cached DICOM header indices
 for avoiding redundant header retrieval from storage.
 
-Index directory resolution (in order of precedence):
-1. --index-directory CLI argument
-2. DICOM_SERIES_PREVIEW_INDEX_DIR environment variable
+Cache directory resolution (in order of precedence):
+1. --cache-dir CLI argument
+2. IDC_SERIES_PREVIEW_CACHE_DIR environment variable
 3. Default: {platformdirs.user_cache_dir("idc-series-preview")}/indices/
 
 Index generation uses progressive range requests to fetch headers efficiently,
@@ -16,6 +16,7 @@ then extracts necessary fields to build a Polars DataFrame.
 import hashlib
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional, Any
 
@@ -157,7 +158,7 @@ def get_cache_directory(cli_arg: Optional[str] = None) -> Path:
 
     Resolution order:
     1. CLI argument (--cache-dir)
-    2. Environment variable (DICOM_SERIES_PREVIEW_CACHE_DIR)
+    2. Environment variable (IDC_SERIES_PREVIEW_CACHE_DIR)
     3. Default: platformdirs.user_cache_dir("idc-series-preview")
 
     Indices are stored in: {cache_dir}/indices/
@@ -173,7 +174,7 @@ def get_cache_directory(cli_arg: Optional[str] = None) -> Path:
         return Path(cli_arg)
 
     # 2. Environment variable
-    env_var = os.environ.get("DICOM_SERIES_PREVIEW_CACHE_DIR")
+    env_var = os.environ.get("IDC_SERIES_PREVIEW_CACHE_DIR")
     if env_var:
         return Path(env_var)
 
@@ -343,15 +344,17 @@ def _generate_parquet_table(
     instance_uids = [s["_uid"] for s in sorted_slices]
     uid_to_sorted_slice = {s["_uid"]: s for s in sorted_slices}
 
-    # Collect all tags and identify which vary
+    # Collect all tags so we can export every available header field.
+    # The parquet file compresses well, so retaining constant columns is cheap
+    # and keeps downstream consumers flexible.
     all_tags = set()
     for dataset in datasets_by_uid.values():
         for elem in dataset:
             tag_key = f"{elem.tag.group:04X}{elem.tag.elem:04X}"
             all_tags.add(tag_key)
 
-    # Determine varying fields with their VR codes
-    varying_fields = {}  # tag_key -> (keyword, vr, values)
+    # Gather all fields (whether they vary or not) with their VR codes
+    all_fields = {}  # tag_key -> (keyword, vr, values)
 
     for tag_key in sorted(all_tags):
         values = []
@@ -377,10 +380,7 @@ def _generate_parquet_table(
         if not keyword or keyword.startswith("_") or keyword == "?":
             continue
 
-        # Check if values vary
-        values_str = [str(v) for v in values]
-        if len(set(values_str)) > 1:  # Has variation
-            varying_fields[tag_key] = (keyword, vr, values)
+        all_fields[tag_key] = (keyword, vr, values)
 
     # Build column data with dynamic typing
     column_data = {}
@@ -432,6 +432,16 @@ def _generate_parquet_table(
     column_data["PrimaryAxis"] = primary_axes
     column_types["PrimaryAxis"] = pl.Utf8
 
+    # Normalized slice index (0.0-1.0) mirrors SliceParameterization behavior
+    normalized_indices = []
+    count = len(instance_uids)
+    if count == 1:
+        normalized_indices = [0.0]
+    elif count > 1:
+        normalized_indices = [i / (count - 1) for i in range(count)]
+    column_data["IndexNormalized"] = normalized_indices
+    column_types["IndexNormalized"] = pl.Float32
+
     # Helper function to get Polars type from VR code
     def get_polars_type(vr: str) -> pl.DataType:
         """Map DICOM VR code to Polars type."""
@@ -440,30 +450,68 @@ def _generate_parquet_table(
             return polars_type if polars_type is not None else pl.Utf8
         return pl.Utf8  # Default to string for unknown VR
 
-    # Process varying fields
-    for tag_key, (keyword, vr, values) in varying_fields.items():
-        # Skip ImagePositionPatient (already stored as PrimaryPosition/PrimaryAxis)
+    # Process every header field we gathered
+    def _convert_scalar(value: Any, target_type: pl.DataType):
+        if value is None:
+            return None
+        if target_type in [pl.Int16, pl.Int32, pl.UInt32]:
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return None
+        if target_type in [pl.Float32, pl.Float64]:
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return None
+        return str(value)
+
+    def _normalize_list_column(values: list[Any], base_type: pl.DataType) -> tuple[list[Any], pl.DataType]:
+        normalized = []
+        for item in values:
+            if item is None or isinstance(item, list):
+                normalized.append(item)
+            else:
+                normalized.append([item])
+        return normalized, pl.List(base_type)
+
+    for tag_key, (keyword, vr, values) in all_fields.items():
+        # Preserve ImagePositionPatient as a list column so downstream consumers
+        # can reconstruct the original vector directly from the header cache.
         if keyword == "ImagePositionPatient":
-            continue
-
-        # Special handling for ImageOrientationPatient (expand to 6 columns)
-        elif keyword == "ImageOrientationPatient":
-            col_vals = [[] for _ in range(6)]
+            typed_values = []
             for val in values:
-                if isinstance(val, (list, tuple)) and len(val) >= 6:
-                    for i in range(6):
+                if isinstance(val, Sequence) and not isinstance(val, (str, bytes)):
+                    row = []
+                    for component in val:
                         try:
-                            col_vals[i].append(float(val[i]))
+                            row.append(float(component))
                         except (ValueError, TypeError):
-                            col_vals[i].append(None)
+                            row.append(None)
+                    typed_values.append(row)
                 else:
-                    for i in range(6):
-                        col_vals[i].append(None)
+                    typed_values.append(None)
 
-            for i in range(6):
-                col_name = f"ImageOrientationPatient_{i}"
-                column_data[col_name] = col_vals[i]
-                column_types[col_name] = pl.Float32
+            column_data[keyword] = typed_values
+            column_types[keyword] = pl.List(pl.Float32)
+
+        # Preserve ImageOrientationPatient as list of floats for future re-use
+        elif keyword == "ImageOrientationPatient":
+            typed_values = []
+            for val in values:
+                if isinstance(val, Sequence) and not isinstance(val, (str, bytes)):
+                    row = []
+                    for component in val:
+                        try:
+                            row.append(float(component))
+                        except (ValueError, TypeError):
+                            row.append(None)
+                    typed_values.append(row)
+                else:
+                    typed_values.append(None)
+
+            column_data[keyword] = typed_values
+            column_types[keyword] = pl.List(pl.Float32)
 
         # Special handling for binary data (store size and hash)
         elif vr in ["OB", "OW", "OD"]:
@@ -500,25 +548,27 @@ def _generate_parquet_table(
         else:
             polars_type = get_polars_type(vr)
             typed_values = []
+            has_sequence = False
 
             for val in values:
                 if val is None:
                     typed_values.append(None)
-                elif polars_type in [pl.Int16, pl.Int32, pl.UInt32]:
-                    try:
-                        typed_values.append(int(val))
-                    except (ValueError, TypeError):
-                        typed_values.append(None)
-                elif polars_type in [pl.Float32, pl.Float64]:
-                    try:
-                        typed_values.append(float(val))
-                    except (ValueError, TypeError):
-                        typed_values.append(None)
+                elif isinstance(val, Sequence) and not isinstance(val, (str, bytes)):
+                    has_sequence = True
+                    converted = []
+                    for component in val:
+                        converted.append(_convert_scalar(component, polars_type))
+                    typed_values.append(converted)
                 else:
-                    typed_values.append(str(val))
+                    typed_values.append(_convert_scalar(val, polars_type))
+
+            if has_sequence:
+                typed_values, list_type = _normalize_list_column(typed_values, polars_type)
+                column_types[keyword] = list_type
+            else:
+                column_types[keyword] = polars_type
 
             column_data[keyword] = typed_values
-            column_types[keyword] = polars_type
 
     # Create DataFrame with explicit types
     df_dict = {}
