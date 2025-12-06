@@ -36,12 +36,11 @@ All commands accept flexible series specifications:
 **Series UID Format**
 - Full UUID: `38902e14-b11f-4548-910e-771ee757dc82`
 - UUID without hyphens: `38902e14b11f4548910e771ee757dc82`
-- Prefix search: `38902e14*` or `389*` (matches first occurrence)
 - Full path: `s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82`
 - Full path: `http://example.com/dicom/38902e14-b11f-4548-910e-771ee757dc82`
 - Local path: `file:///data/dicom/38902e14-b11f-4548-910e-771ee757dc82`
 
-When a prefix or full path is used, it's automatically resolved to the complete series UID.
+Partial prefixes and wildcards are not supported; always specify the complete SeriesInstanceUID or a fully-qualified path.
 
 ### Storage Options
 
@@ -59,7 +58,7 @@ When a prefix or full path is used, it's automatically resolved to the complete 
 
 `--image-width PIXELS`
 : Width of each image or tile in pixels. Height is scaled proportionally to maintain aspect ratio.
-: Default: `128`
+: Default: `256` for mosaic/contrast commands. The `image` subcommand keeps the natural DICOM size unless you specify `--image-width`.
 : Larger values produce higher-quality output but larger files
 
 ### Contrast Options
@@ -88,7 +87,7 @@ When a prefix or full path is used, it's automatically resolved to the complete 
 
 `-q, --quality LEVEL`
 : Output image compression quality (0-100).
-: Default: `25`
+: Default: `60`
 : Recommendations:
   - WebP: 20-50 (good quality-to-size ratio)
   - JPEG: 70+ (acceptable quality)
@@ -122,7 +121,7 @@ idc-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
 
 `-t/--tile-width WIDTH`
 : Number of images per row in the mosaic grid.
-: Default: `6`
+: Default: `3`
 
 `-t/--tile-height HEIGHT`
 : Number of images per column in the mosaic grid.

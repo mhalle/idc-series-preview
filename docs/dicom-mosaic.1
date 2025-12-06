@@ -23,9 +23,8 @@ The DICOM Series UID. Can be specified in multiple formats:
 Full 32-character hex UID: 38902e14b11f4548910e771ee757dc82
 .IP \(bu 2
 Standard UUID format: 38902e14-b11f-4548-910e-771ee757dc82
-.IP \(bu 2
-Partial prefix with wildcard: 38902e14* or 389*
 .RE
+Partial prefixes or wildcards are not supported; always provide the complete SeriesInstanceUID or an explicit storage path.
 .TP
 .I OUTPUT
 Output image file path. Must have a .webp, .jpg, or .jpeg extension.

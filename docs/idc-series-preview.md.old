@@ -18,7 +18,8 @@ The tool uses efficient range requests to retrieve only DICOM headers initially,
 The DICOM Series UID. Can be specified in multiple formats:
 - Full 32-character hex UID: `38902e14b11f4548910e771ee757dc82`
 - Standard UUID format: `38902e14-b11f-4548-910e-771ee757dc82`
-- Partial prefix with wildcard: `38902e14*` or `389*`
+
+Partial prefixes or wildcards are not supported; always pass the complete SeriesInstanceUID or an explicit storage path.
 
 ### OUTPUT
 Output image file path. Must have a `.webp`, `.jpg`, or `.jpeg` extension.
@@ -345,7 +346,6 @@ idc-series-preview build-index [OPTIONS] SERIESUID OUTPUT
 The DICOM Series UID. Same format options as the main command:
 - Full 32-character hex UID: `38902e14b11f4548910e771ee757dc82`
 - Standard UUID format: `38902e14-b11f-4548-910e-771ee757dc82`
-- Partial prefix with wildcard: `38902e14*`
 
 #### OUTPUT
 Output Parquet file path. Must have a `.parquet` extension.

@@ -169,7 +169,7 @@ src/idc_series_preview/
 ### Responsibilities
 
 **Initialization:**
-- Parse series specification (UID, prefix, full path)
+- Parse series specification (UID or full path)
 - Resolve against storage backend
 - Load or generate index
 - Cache for future use

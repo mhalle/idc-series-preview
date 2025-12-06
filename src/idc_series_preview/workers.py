@@ -27,7 +27,7 @@ def optimal_workers(n, max_workers, min_workers=1):
         1
     """
     if n <= max_workers:
-        return n
+        return max(min_workers, n)
 
     # Find all divisors of n in the valid range
     divisors = []

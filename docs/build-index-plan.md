@@ -17,7 +17,6 @@ idc-series-preview build-index SERIESUID [INDEXNAME]
 The DICOM Series UID (same format options as other commands)
 - Full hex UID: `38902e14b11f4548910e771ee757dc82`
 - UUID format: `38902e14-b11f-4548-910e-771ee757dc82`
-- Wildcard prefix: `38902e14*`
 
 #### INDEXNAME (optional)
 Output Parquet index file path.

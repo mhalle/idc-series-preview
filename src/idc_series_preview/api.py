@@ -463,10 +463,9 @@ class SeriesIndex:
         Parameters
         ----------
         series : str
-            Series UID, prefix (with *), or full path.
+            Series UID or full path.
             Examples:
             - "38902e14-b11f-4548-910e-771ee757dc82"
-            - "38902e14*"
             - "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82"
             - "/local/dicom/series-uid"
 
@@ -682,13 +681,13 @@ class SeriesIndex:
                     raise ValueError(f"Position must be between 0.0 and 1.0, got {pos}")
 
             # Map positions to instance UIDs, look up filenames, and build URLs
-            urls_with_pos = []  # List of (url, pos, instance_uid) tuples
+            urls_with_pos = []  # List of (url, pos, instance_uid, dataset) tuples
             for pos in positions:
                 result = retriever.get_instance_at_position(self._series_uid, pos)
                 if result is None:
                     logger.warning(f"Failed to locate instance at position {pos}")
                     continue
-                instance_uid, _ = result
+                instance_uid, dataset = result
 
                 # Look up filename in index
                 matching = self._index_df.filter(pl.col("SOPInstanceUID") == instance_uid)
@@ -697,20 +696,36 @@ class SeriesIndex:
                     continue
                 data_url = matching[0, "DataURL"]
 
-                urls_with_pos.append((data_url, pos, instance_uid))
+                urls_with_pos.append((data_url, pos, instance_uid, dataset))
 
             if not urls_with_pos:
                 raise ValueError(f"Failed to locate any instances at {len(positions)} positions")
 
-            # Fetch all in parallel via retriever
-            urls = [url for url, _, _ in urls_with_pos]
-            datasets = retriever.get_instances(urls, headers_only=headers_only, max_workers=max_workers)
+            # Fetch remaining datasets in parallel when get_instance_at_position returned None headers (cache miss)
+            urls_needing_fetch = []
+            for (url, _, instance_uid, dataset) in urls_with_pos:
+                if dataset is None or headers_only:
+                    urls_needing_fetch.append((url, instance_uid))
+
+            fetched_map = {}
+            if urls_needing_fetch:
+                fetch_urls = [url for url, _ in urls_needing_fetch]
+                datasets = retriever.get_instances(
+                    fetch_urls,
+                    headers_only=headers_only,
+                    max_workers=max_workers,
+                )
+                for (url, instance_uid), dataset in zip(urls_needing_fetch, datasets):
+                    fetched_map[(url, instance_uid)] = dataset
 
             # Build result mapping
             results = {}
-            for (url, pos, instance_uid), dataset in zip(urls_with_pos, datasets):
-                if dataset is not None:
-                    results[pos] = Instance(instance_uid, dataset, self)
+            for (url, pos, instance_uid, dataset) in urls_with_pos:
+                resolved = dataset
+                if resolved is None or headers_only:
+                    resolved = fetched_map.get((url, instance_uid))
+                if resolved is not None:
+                    results[pos] = Instance(instance_uid, resolved, self)
 
             # Return in position order, filtering out failed fetches
             instances = [results[pos] for pos in unique_positions if pos in results]
@@ -752,9 +767,16 @@ class SeriesIndex:
             sorted_df = self._index_df.sort("Index")
             urls_with_slice = []  # List of (url, slice_num, instance_uid) tuples
             for slice_num in slice_numbers:
-                row = sorted_df[slice_num]
-                data_url = row["DataURL"][0]
-                instance_uid = row["SOPInstanceUID"][0]
+                try:
+                    row = sorted_df.row(slice_num, named=True)
+                except IndexError as exc:
+                    raise ValueError(
+                        f"Slice number {slice_num} out of bounds "
+                        f"(series has {self.instance_count} instances)"
+                    ) from exc
+
+                data_url = row["DataURL"]
+                instance_uid = row["SOPInstanceUID"]
                 urls_with_slice.append((data_url, slice_num, instance_uid))
 
             # Fetch all in parallel via retriever

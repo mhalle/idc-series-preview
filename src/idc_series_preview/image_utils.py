@@ -64,7 +64,7 @@ class InstanceRenderer:
 
     def __init__(
         self,
-        image_width: int = 128,
+        image_width: Optional[int] = 128,
         window_settings: Optional[Union[str, Dict[str, float]]] = None,
     ):
         self.image_width = image_width
@@ -257,6 +257,9 @@ class InstanceRenderer:
         Returns:
             Resized PIL Image
         """
+        if self.image_width is None or self.image_width <= 0:
+            return img
+
         width, height = img.size
         aspect_ratio = height / width
         new_height = int(self.image_width * aspect_ratio)

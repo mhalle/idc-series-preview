@@ -38,8 +38,8 @@ def add_common_arguments(parser):
     """Add shared arguments to a parser (series, output, root, contrast, quality, verbose)."""
     parser.add_argument(
         "seriesuid",
-        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
-             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+        help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
              "Full paths override --root parameter."
     )
     parser.add_argument(
@@ -504,8 +504,7 @@ def image_command(args, logger):
         try:
             from .image_utils import InstanceRenderer
 
-            image_width = args.image_width if args.image_width is not None else 2048
-            renderer = InstanceRenderer(image_width=image_width, window_settings=window_settings)
+            renderer = InstanceRenderer(image_width=args.image_width, window_settings=window_settings)
             output_image = renderer.render_instance(instance.dataset)
         except ValueError as e:
             logger.error(f"Failed to generate image: {e}")
@@ -921,8 +920,8 @@ def _setup_image_subcommand(subparsers):
     # Add positional arguments
     image_parser.add_argument(
         "seriesuid",
-        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
-             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+        help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
              "Full paths override --root parameter."
     )
     image_parser.add_argument(
@@ -1010,8 +1009,8 @@ def _setup_contrast_mosaic_subcommand(subparsers):
     # Add positional arguments (series UID and output)
     contrast_parser.add_argument(
         "seriesuid",
-        help="DICOM Series UID or full path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
-             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+        help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
              "Full paths override --root parameter."
     )
     contrast_parser.add_argument(
@@ -1213,8 +1212,8 @@ def _setup_build_index_subcommand(subparsers):
         "series",
         nargs="*",
         metavar="SERIES",
-        help="DICOM Series UID(s) or path(s). Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
-             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+        help="DICOM Series UID(s) or path(s). Provide complete UIDs (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or explicit paths (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
              "Full paths override --root parameter. Required unless using --rebuild --all."
     )
 
@@ -1278,8 +1277,8 @@ def _setup_get_index_subcommand(subparsers):
     get_index_parser.add_argument(
         "series",
         metavar="SERIES",
-        help="DICOM Series UID or path. Can be: series UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82), "
-             "partial UID prefix (e.g., 38902e14*, 389*), or full path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+        help="DICOM Series UID or path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
              "Full paths override --root parameter."
     )
 
@@ -1342,7 +1341,7 @@ def _setup_clear_index_subcommand(subparsers):
         "series",
         nargs="*",
         metavar="SERIES",
-        help="Optional series UIDs/paths to remove from the cache"
+        help="Optional complete series UIDs or explicit paths to remove from the cache"
     )
 
     clear_parser.add_argument(

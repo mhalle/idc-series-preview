@@ -12,10 +12,8 @@ def parse_series_specification(
 
     Handles multiple formats:
     - Series UID only: "38902e14-b11f-4548-910e-771ee757dc82"
-    - Series UID with prefix: "38902e14*"
     - Full path: "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82"
     - Full path with slash: "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/"
-    - Full path with wildcard: "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82/*"
     - Local path: "file:///path/to/series/38902e14-b11f-4548-910e-771ee757dc82"
     - HTTP URL: "http://example.com/dicom/38902e14-b11f-4548-910e-771ee757dc82"
 
@@ -24,7 +22,7 @@ def parse_series_specification(
         default_root: Default root path to use if only UID is provided
 
     Returns:
-        Tuple of (root_path, series_uid_or_prefix)
+        Tuple of (root_path, series_uid)
 
     Raises:
         ValueError: If the specification format is invalid
@@ -59,17 +57,14 @@ def normalize_series_uid(series_uid: str) -> str:
     Converts formats like:
     - 38902e14b11f4548910e771ee757dc82
     - 38902e14-b11f-4548-910e-771ee757dc82
-    - 38902e14* (prefix with wildcard)
-    - 389* (partial prefix)
 
     To standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-    Or returns prefix with wildcard for partial matches.
 
     Args:
-        series_uid: Series UID with or without hyphens, or prefix with wildcard
+        series_uid: Series UID with or without hyphens
 
     Returns:
-        Normalized series UID with hyphens, or prefix pattern for searching
+        Normalized series UID with hyphens
     """
     # Check if this is a prefix search (contains wildcard)
     if '*' in series_uid:
@@ -96,10 +91,10 @@ def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logg
     """
     Parse, normalize, and resolve series specification.
 
-    Handles full paths, prefixes, and series UIDs, performing prefix search if needed.
+    Handles full paths and series UIDs.
 
     Args:
-        series_spec: Series specification (UID, prefix, or full path)
+        series_spec: Series specification (UID or full path)
         root: Default root path
         logger: Logger instance
 

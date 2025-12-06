@@ -437,7 +437,7 @@ class DICOMRetriever:
             instances in the range (no duplicates).
         """
         # Try to get sorted instances from cached index
-        sorted_instance_paths = None
+        sorted_instance_records: Optional[List[Tuple[str, str]]] = None
         if self.index_df is not None:
             sorted_instance_records = self._get_sorted_instances_from_index(
                 series_uid, start=start, end=end
@@ -512,7 +512,10 @@ class DICOMRetriever:
                 selected = filtered_headers
             else:
                 # Select evenly distributed instances (includes first and last to avoid fencepost errors)
-                indices = [int(i * (len(filtered_headers) - 1) / (count - 1)) for i in range(count)]
+                if count == 1:
+                    indices = [len(filtered_headers) // 2]
+                else:
+                    indices = [int(i * (len(filtered_headers) - 1) / (count - 1)) for i in range(count)]
                 selected = [filtered_headers[i] for i in indices]
 
             if logger.isEnabledFor(logging.DEBUG):
@@ -528,7 +531,10 @@ class DICOMRetriever:
                     logger.debug(f"Index has {len(sorted_instance_records)} instances, less than requested {count}")
             else:
                 # Select evenly distributed instances from sorted list
-                indices = [int(i * (len(sorted_instance_records) - 1) / (count - 1)) for i in range(count)]
+                if count == 1:
+                    indices = [len(sorted_instance_records) // 2]
+                else:
+                    indices = [int(i * (len(sorted_instance_records) - 1) / (count - 1)) for i in range(count)]
                 selected_records = [sorted_instance_records[i] for i in indices]
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Selected {count} instances from cached index ({len(sorted_instance_records)} total)")
@@ -551,28 +557,28 @@ class DICOMRetriever:
                 for record in selected_records
             }
 
-        for future in as_completed(futures):
-                instance_uid = futures[future]
-                try:
-                    ds = future.result()
-                    if ds is not None:
-                        results.append((instance_uid, ds))
-                        # Count actual file size
-                        try:
-                            identifier_for_size = None
-                            identifier_for_size = record_map.get(instance_uid)
-                            if identifier_for_size and ('/' in identifier_for_size or '://' in identifier_for_size):
-                                path = self._to_store_path(identifier_for_size)
-                            else:
-                                path = self._get_instance_path(series_uid, instance_uid)
-                            meta = self.store.head(path)
-                            file_size = meta.get('size') if isinstance(meta, dict) else meta.size
-                            pixel_bytes += file_size
-                        except:
-                            pass
-                except Exception as e:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Failed to retrieve pixel data for {instance_uid}: {e}")
+            for future in as_completed(futures):
+                    instance_uid = futures[future]
+                    try:
+                        ds = future.result()
+                        if ds is not None:
+                            results.append((instance_uid, ds))
+                            # Count actual file size
+                            try:
+                                identifier_for_size = None
+                                identifier_for_size = record_map.get(instance_uid)
+                                if identifier_for_size and ('/' in identifier_for_size or '://' in identifier_for_size):
+                                    path = self._to_store_path(identifier_for_size)
+                                else:
+                                    path = self._get_instance_path(series_uid, instance_uid)
+                                meta = self.store.head(path)
+                                file_size = meta.get('size') if isinstance(meta, dict) else meta.size
+                                pixel_bytes += file_size
+                            except:
+                                pass
+                    except Exception as e:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Failed to retrieve pixel data for {instance_uid}: {e}")
 
         if logger.isEnabledFor(logging.DEBUG):
             total_bytes = headers_bytes + pixel_bytes
