@@ -34,8 +34,8 @@ def setup_logging(verbose=False):
     )
 
 
-def add_common_arguments(parser):
-    """Add shared arguments to a parser (series, output, root, contrast, quality, verbose)."""
+def add_common_arguments(parser, *, include_contrast=True, image_width_default=DEFAULT_IMAGE_WIDTH):
+    """Add shared arguments to a parser (series, output, root, sizing, contrast, quality, verbose)."""
     parser.add_argument(
         "seriesuid",
         help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
@@ -58,20 +58,21 @@ def add_common_arguments(parser):
     parser.add_argument(
         "-w", "--image-width",
         type=int,
-        default=DEFAULT_IMAGE_WIDTH,
-        help=f"Width of each image tile in pixels. Height will be proportionally scaled. Default: {DEFAULT_IMAGE_WIDTH}"
+        default=image_width_default,
+        help="Width of each image in pixels. Height is scaled proportionally."
     )
 
     # Contrast parameters (shared)
-    parser.add_argument(
-        "-c", "--contrast",
-        help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
-             "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
-             "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
-             "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
-             "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
-             "Supports both slash (medical standard) and comma separators."
-    )
+    if include_contrast:
+        parser.add_argument(
+            "-c", "--contrast",
+            help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
+                 "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
+                 "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
+                 "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
+                 "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
+                 "Supports both slash (medical standard) and comma separators."
+        )
 
     # Output format arguments
     parser.add_argument(
@@ -917,59 +918,7 @@ def _setup_image_subcommand(subparsers):
         help="Extract a single image from a DICOM series at a specific position"
     )
 
-    # Add positional arguments
-    image_parser.add_argument(
-        "seriesuid",
-        help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
-             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
-             "Full paths override --root parameter."
-    )
-    image_parser.add_argument(
-        "output",
-        help="Output image path (.webp or .jpg)"
-    )
-
-    # Storage arguments
-    image_parser.add_argument(
-        "--root",
-        default="s3://idc-open-data",
-        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
-    )
-
-    # Image scaling with short alias
-    image_parser.add_argument(
-        "-w", "--image-width",
-        type=int,
-        default=None,  # None means use natural size (no scaling)
-        help="Width of image in pixels. Height will be proportionally scaled. "
-             "Default: None (natural DICOM image size)"
-    )
-
-    # Contrast parameters
-    image_parser.add_argument(
-        "-c", "--contrast",
-        help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
-             "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
-             "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
-             "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
-             "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
-             "Supports both slash (medical standard) and comma separators."
-    )
-
-    # Output format arguments
-    image_parser.add_argument(
-        "-q", "--quality",
-        type=int,
-        default=DEFAULT_IMAGE_QUALITY,
-        help=f"Output image quality 0-100. Default: {DEFAULT_IMAGE_QUALITY} for WebP, 70+ recommended for JPEG"
-    )
-
-    # Utility arguments
-    image_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable detailed logging"
-    )
+    add_common_arguments(image_parser, image_width_default=None)
 
     # Cache arguments
     add_cache_arguments(image_parser)
@@ -1006,32 +955,7 @@ def _setup_contrast_mosaic_subcommand(subparsers):
         help="Create a grid of a DICOM instance(s) under multiple contrast settings (contrasts on x-axis, instances on y-axis)"
     )
 
-    # Add positional arguments (series UID and output)
-    contrast_parser.add_argument(
-        "seriesuid",
-        help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
-             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
-             "Full paths override --root parameter."
-    )
-    contrast_parser.add_argument(
-        "output",
-        help="Output image path (.webp or .jpg)"
-    )
-
-    # Storage arguments
-    contrast_parser.add_argument(
-        "--root",
-        default="s3://idc-open-data",
-        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
-    )
-
-    # Image sizing
-    contrast_parser.add_argument(
-        "-w", "--image-width",
-        type=int,
-        default=DEFAULT_IMAGE_WIDTH,
-        help=f"Width of each image in pixels. Height will be proportionally scaled. Default: {DEFAULT_IMAGE_WIDTH}"
-    )
+    add_common_arguments(contrast_parser, include_contrast=False)
 
     # Instance selection: position mode (single instance)
     contrast_parser.add_argument(
