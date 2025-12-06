@@ -11,10 +11,7 @@ def test_mosaic_cli_invokes_core(monkeypatch):
         captured["tile_width"] = args.tile_width
         return 0
 
-    monkeypatch.setattr(
-        "idc_series_preview.cli_core.mosaic_command",
-        fake_mosaic,
-    )
+    monkeypatch.setattr("idc_series_preview.cli_click.mosaic_command", fake_mosaic)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -39,10 +36,7 @@ def test_mosaic_cli_maps_nonzero_exit_to_click_exception(monkeypatch):
     def fake_mosaic(args, logger):
         return 2
 
-    monkeypatch.setattr(
-        "idc_series_preview.cli_core.mosaic_command",
-        fake_mosaic,
-    )
+    monkeypatch.setattr("idc_series_preview.cli_click.mosaic_command", fake_mosaic)
 
     runner = CliRunner()
     result = runner.invoke(
