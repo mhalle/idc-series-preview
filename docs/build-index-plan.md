@@ -192,10 +192,10 @@ def get_instance_sorting_info(series_uid, instance_uid, index_cache=None):
     """
 ```
 
-#### In __main__.py:
-- Add `--index` and `--noindex` arguments to argument parsers
-- Parse index flag and pass IndexCache to commands
-- Commands load index and use it to skip header retrieval if available
+#### In cli_core.py / cli_click.py:
+- Expose `--index`/`--noindex` (or similar) Click options that feed into the shared command namespace
+- In the command handlers, inspect those flags and load/prefer the cached index when appropriate
+- Fall back to header retrieval only when the cache is explicitly bypassed or missing
 
 ### Performance Impact
 
