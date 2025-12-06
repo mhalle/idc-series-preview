@@ -32,6 +32,7 @@ dependencies = [
     "pillow>=10.0.0",
     "polars>=0.20.0",
     "platformdirs>=3.0.0",
+    "click>=8.1.0",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +48,7 @@ gdcm = [
 ]
 
 [project.scripts]
-idc-series-preview = "idc_series_preview.__main__:main"
+idc-series-preview = "idc_series_preview.cli_click:cli"
 
 [tool.black]
 line-length = 100

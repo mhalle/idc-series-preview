@@ -7,7 +7,7 @@ import polars as pl
 import pytest
 from PIL import Image
 
-from idc_series_preview.__main__ import (
+from idc_series_preview.cli_core import (
     build_index_command,
     contrast_mosaic_command,
     get_index_command,
@@ -127,7 +127,7 @@ def test_mosaic_command_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
     monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
     monkeypatch.setattr("idc_series_preview.image_utils.InstanceRenderer", DummyRenderer)
     monkeypatch.setattr("idc_series_preview.image_utils.MosaicRenderer", RecordingMosaicRenderer)
-    monkeypatch.setattr("idc_series_preview.__main__.save_image", fake_save_image)
+    monkeypatch.setattr("idc_series_preview.cli_core.save_image", fake_save_image)
 
     args = SimpleNamespace(
         seriesuid="series",
@@ -202,7 +202,7 @@ def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
     monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
     monkeypatch.setattr("idc_series_preview.image_utils.InstanceRenderer", DummyRenderer)
     monkeypatch.setattr("idc_series_preview.image_utils.MosaicRenderer", RecordingGridRenderer)
-    monkeypatch.setattr("idc_series_preview.__main__.save_image", fake_save_image)
+    monkeypatch.setattr("idc_series_preview.cli_core.save_image", fake_save_image)
 
     args = SimpleNamespace(
         seriesuid="series",
