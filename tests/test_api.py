@@ -7,6 +7,8 @@ The series UID used is stable and expected to remain available.
 import pytest
 from PIL import Image
 import numpy as np
+import polars as pl
+from types import MethodType
 
 from idc_series_preview import SeriesIndex, Contrast, Instance, PositionInterpolator
 
@@ -211,6 +213,87 @@ class TestSeriesIndexGetImages:
         assert len(images) == len(positions)
         for img in images:
             assert isinstance(img, Image.Image)
+
+
+class DummyRetrieverNoFetch:
+    def __init__(self, dataset_by_position):
+        self.dataset_by_position = dataset_by_position
+
+    def get_instance_at_position(self, series_uid, position):
+        return self.dataset_by_position[position]
+
+    def get_instances(self, urls, headers_only=False, max_workers=None):
+        raise AssertionError("get_instances should not be called when datasets already available")
+
+
+class DummyRetrieverHeadersOnly:
+    def __init__(self, dataset_by_position, fetch_results):
+        self.dataset_by_position = dataset_by_position
+        self.fetch_results = fetch_results
+        self.calls = []
+
+    def get_instance_at_position(self, series_uid, position):
+        return self.dataset_by_position[position]
+
+    def get_instances(self, urls, headers_only=False, max_workers=None):
+        self.calls.append((tuple(urls), headers_only))
+        return [self.fetch_results[url] for url in urls]
+
+
+def _make_fake_series_index(retriever, uid_url_pairs):
+    index = object.__new__(SeriesIndex)
+    index._index_df = pl.DataFrame(
+        {
+            "Index": list(range(len(uid_url_pairs))),
+            "SOPInstanceUID": [uid for uid, _ in uid_url_pairs],
+            "DataURL": [url for _, url in uid_url_pairs],
+        }
+    )
+    index._series_uid = "series"
+    index._root_path = "root"
+    index._cache_dir = None
+    index._use_cache = True
+    index._retriever = retriever
+    index._get_or_create_retriever = MethodType(lambda self: retriever, index)
+    return index
+
+
+def test_get_instances_reuses_dataset_without_refetch():
+    datasets = {0.1: ("uid-1", object()), 0.4: ("uid-2", object())}
+    retriever = DummyRetrieverNoFetch(datasets)
+    uid_url_pairs = [
+        ("uid-1", "s3://root/uid-1.dcm"),
+        ("uid-2", "s3://root/uid-2.dcm"),
+    ]
+    index = _make_fake_series_index(retriever, uid_url_pairs)
+
+    instances = index.get_instances(positions=[0.1, 0.4])
+
+    assert len(instances) == 2
+    assert instances[0].instance_uid == "uid-1"
+    assert instances[1].instance_uid == "uid-2"
+
+
+def test_get_instances_headers_only_fetches_missing_datasets():
+    datasets = {0.3: ("uid-h1", None), 0.6: ("uid-h2", None)}
+    fetch_map = {
+        "s3://root/uid-h1.dcm": object(),
+        "s3://root/uid-h2.dcm": object(),
+    }
+    retriever = DummyRetrieverHeadersOnly(datasets, fetch_map)
+    uid_url_pairs = [
+        ("uid-h1", "s3://root/uid-h1.dcm"),
+        ("uid-h2", "s3://root/uid-h2.dcm"),
+    ]
+    index = _make_fake_series_index(retriever, uid_url_pairs)
+
+    instances = index.get_instances(positions=[0.3, 0.6], headers_only=True)
+
+    assert len(instances) == 2
+    assert retriever.calls == [(
+        ("s3://root/uid-h1.dcm", "s3://root/uid-h2.dcm"),
+        True,
+    )]
 
     def test_get_images_by_slice_numbers(self):
         """Test rendering images by slice number."""
