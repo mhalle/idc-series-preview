@@ -203,7 +203,8 @@ def test_video_command_streams_slices_to_ffmpeg(monkeypatch, tmp_path):
 
     class RecordingProcess:
         def __init__(self):
-            self.stdin = RecordingPipe()
+            self.stdin_pipe = RecordingPipe()
+            self.stdin = self.stdin_pipe
             self.returncode = 0
 
         def communicate(self):
@@ -255,7 +256,7 @@ def test_video_command_streams_slices_to_ffmpeg(monkeypatch, tmp_path):
     assert call["height"] == 1
     assert call["fps"] == 24.0
     assert call["crf"] == _map_quality_to_crf(DEFAULT_IMAGE_QUALITY)
-    frames = call["process"].stdin.frames
+    frames = call["process"].stdin_pipe.frames
     assert len(frames) == 3
     assert [frame[0] for frame in frames] == [0, 40, 80]
 
@@ -288,7 +289,7 @@ def test_video_command_rejects_invalid_fps(monkeypatch, tmp_path):
         end=1.0,
         fps=0.0,
         frames=None,
-        quality=DEFAULT_VIDEO_QUALITY,
+        quality=DEFAULT_IMAGE_QUALITY,
     )
     logger = logging.getLogger("test")
 

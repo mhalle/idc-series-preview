@@ -102,7 +102,7 @@ def test_video_cli_invokes_core(monkeypatch):
     assert captured["start"] == 0.1
     assert captured["output"] == "video.mp4"
     assert captured["frames"] == 12
-    assert captured["quality"] == 23
+    assert captured["quality"] == 60
 
 
 def test_video_cli_accepts_quality_option(monkeypatch):
