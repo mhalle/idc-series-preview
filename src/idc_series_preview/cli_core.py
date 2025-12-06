@@ -6,9 +6,12 @@ Preview DICOM series stored on S3, HTTP, or local files with intelligent samplin
 and visualization. Supports both tiled mosaics and individual image extraction.
 """
 
+import argparse
+import sys
 import logging
 import math
 import shutil
+import json
 from pathlib import Path
 
 from .image_utils import MosaicRenderer, save_image
@@ -28,6 +31,97 @@ def setup_logging(verbose=False):
     logging.basicConfig(
         level=level,
         format=format_str
+    )
+
+
+def add_common_arguments(parser, *, include_contrast=True, image_width_default=DEFAULT_IMAGE_WIDTH):
+    """Add shared arguments to a parser (series, output, root, sizing, contrast, quality, verbose)."""
+    parser.add_argument(
+        "seriesuid",
+        help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+             "Full paths override --root parameter."
+    )
+    parser.add_argument(
+        "output",
+        help="Output image path (.webp or .jpg)"
+    )
+
+    # Storage arguments
+    parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    # Image scaling (shared)
+    parser.add_argument(
+        "-w", "--image-width",
+        type=int,
+        default=image_width_default,
+        help="Width of each image in pixels. Height is scaled proportionally."
+    )
+
+    # Contrast parameters (shared)
+    if include_contrast:
+        parser.add_argument(
+            "-c", "--contrast",
+            help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
+                 "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
+                 "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
+                 "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
+                 "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
+                 "Supports both slash (medical standard) and comma separators."
+        )
+
+    # Output format arguments
+    parser.add_argument(
+        "-q", "--quality",
+        type=int,
+        default=DEFAULT_IMAGE_QUALITY,
+        help=f"Output image quality 0-100. Default: {DEFAULT_IMAGE_QUALITY} for WebP, 70+ recommended for JPEG"
+    )
+
+    # Utility arguments
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+
+def add_range_arguments(parser):
+    """Add range selection arguments (--start, --end)."""
+    parser.add_argument(
+        "-s", "--start",
+        type=float,
+        default=0.0,
+        help="Start of normalized z-position range (0.0-1.0). Default: 0.0 (beginning of series)"
+    )
+    parser.add_argument(
+        "-e", "--end",
+        type=float,
+        default=1.0,
+        help="End of normalized z-position range (0.0-1.0). Default: 1.0 (end of series)"
+    )
+
+
+def add_cache_arguments(parser):
+    """Add caching arguments (--cache-dir, --no-cache)."""
+    cache_group = parser.add_mutually_exclusive_group()
+    cache_group.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        help="Directory to store/load DICOM series index files. "
+             "Overrides default cache location. Index files are stored in "
+             "{CACHE_DIR}/indices/{SERIESUID}_index.parquet and loaded/generated automatically."
+    )
+    cache_group.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable index caching. Fetches headers fresh from storage on every run. "
+             "By default, caching is enabled using IDC_SERIES_PREVIEW_CACHE_DIR env var "
+             "or platform-specific cache directory."
     )
 
 
@@ -782,3 +876,445 @@ def clear_index_command(args, logger):
     except Exception as e:
         logger.exception(f"Error clearing index cache: {e}")
         return 1
+
+
+def _setup_mosaic_subcommand(subparsers):
+    """
+    Setup mosaic subcommand with all its arguments.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    mosaic_parser = subparsers.add_parser(
+        "mosaic",
+        help="Generate a tiled mosaic grid from a DICOM series"
+    )
+    add_common_arguments(mosaic_parser)
+    add_range_arguments(mosaic_parser)
+    add_cache_arguments(mosaic_parser)
+    mosaic_parser.add_argument(
+        "-t", "--tile-width",
+        type=int,
+        default=DEFAULT_MOSAIC_TILE_SIZE,
+        help=f"Number of images per row in mosaic. Default: {DEFAULT_MOSAIC_TILE_SIZE}"
+    )
+    mosaic_parser.add_argument(
+        "--tile-height",
+        type=int,
+        help="Number of images per column in mosaic. Default: same as --tile-width"
+    )
+    mosaic_parser.set_defaults(func=mosaic_command)
+
+
+def _setup_image_subcommand(subparsers):
+    """
+    Setup image subcommand with all its arguments.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    image_parser = subparsers.add_parser(
+        "image",
+        help="Extract a single image from a DICOM series at a specific position"
+    )
+
+    add_common_arguments(image_parser, image_width_default=None)
+
+    # Cache arguments
+    add_cache_arguments(image_parser)
+
+    # Position arguments
+    image_parser.add_argument(
+        "-p", "--position",
+        type=float,
+        required=True,
+        help="Extract image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior"
+    )
+    image_parser.add_argument(
+        "--slice-offset",
+        type=int,
+        default=0,
+        help="Offset from --position by number of slices (e.g., 1 for next slice, -1 for previous). Default: 0"
+    )
+
+    image_parser.set_defaults(func=image_command)
+
+
+def _setup_contrast_mosaic_subcommand(subparsers):
+    """
+    Setup contrast-mosaic subcommand with all its arguments.
+
+    Grid layout: contrasts on x-axis (columns), instances on y-axis (rows).
+    Use either --position for single instance or --start/--end for range of instances.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    contrast_parser = subparsers.add_parser(
+        "contrast-mosaic",
+        help="Create a grid of a DICOM instance(s) under multiple contrast settings (contrasts on x-axis, instances on y-axis)"
+    )
+
+    add_common_arguments(contrast_parser, include_contrast=False)
+
+    # Instance selection: position mode (single instance)
+    contrast_parser.add_argument(
+        "-p", "--position",
+        type=float,
+        help="Extract single image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior. "
+             "Cannot be used with --start/--end."
+    )
+    contrast_parser.add_argument(
+        "--slice-offset",
+        type=int,
+        default=0,
+        help="Offset from --position by number of slices (only valid with --position). Default: 0"
+    )
+
+    # Instance selection: range mode (multiple instances)
+    contrast_parser.add_argument(
+        "-s", "--start",
+        type=float,
+        help="Start of normalized z-position range (0.0-1.0) for selecting multiple instances. "
+             "Cannot be used with --position."
+    )
+    contrast_parser.add_argument(
+        "-e", "--end",
+        type=float,
+        help="End of normalized z-position range (0.0-1.0) for selecting multiple instances. "
+             "Cannot be used with --position."
+    )
+
+    # Vertical tiling (instances)
+    contrast_parser.add_argument(
+        "-t", "--tile-height",
+        type=int,
+        default=2,
+        help="Number of instances per column (y-axis). Only used with --start/--end. Default: 2"
+    )
+
+    # Contrast settings (repeatable, always horizontal)
+    contrast_parser.add_argument(
+        "-c", "--contrast",
+        action="append",
+        help="Contrast settings (repeatable, x-axis): CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
+             "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
+             "shortcut (soft, media, t1, t2, proton), 'auto', 'embedded', or custom window/level. "
+             "Formats: '1500/500' (slash, medical standard) or '1500,500' (comma). "
+             "Negative values supported (e.g., '1500/-500'). At least one -c/--contrast is required."
+    )
+
+    # Index caching arguments
+    add_cache_arguments(contrast_parser)
+
+    contrast_parser.set_defaults(func=contrast_mosaic_command)
+
+
+def build_index_command(args, logger):
+    """
+    Build DICOM series indices by capturing headers and saving to Parquet format.
+
+    Can work in two modes:
+    1. Multiple series with --cache-dir: saves to {cache_dir}/indices/{seriesuid}_index.parquet
+    2. Single series with -o: saves to {output_dir}/indices/{seriesuid}_index.parquet
+
+    Args:
+        args: Parsed command arguments
+        logger: Logger instance
+
+    Returns:
+        0 on success, 1 on error
+    """
+    try:
+        from .api import SeriesIndex
+
+        # Determine cache/output directory (either cache-dir, output dir, or default cache)
+        if getattr(args, "output", None):
+            output_dir = Path(args.output)
+            if len(args.series) != 1:
+                logger.error("When using -o, specify exactly one series")
+                return 1
+        elif getattr(args, "cache_dir", None):
+            output_dir = Path(args.cache_dir)
+        else:
+            output_dir = get_cache_directory()
+
+        cache_dir_str = str(output_dir)
+
+        if args.rebuild and args.all:
+            if args.series:
+                logger.error("--all cannot be combined with explicit series arguments")
+                return 1
+            from .index_cache import iterate_cached_series
+
+            cached = list(iterate_cached_series(Path(cache_dir_str)))
+            if not cached:
+                logger.error("No cached indices found to rebuild")
+                return 1
+            series_list = [series for series, _ in cached]
+            if args.verbose:
+                logger.info(f"Rebuilding {len(series_list)} cached indices")
+        else:
+            series_list = args.series
+            if not series_list:
+                logger.error("Specify at least one SERIES argument or use --rebuild --all")
+                return 1
+
+        if args.verbose:
+            logger.info(f"Building indices for {len(series_list)} series")
+            logger.info(f"Cache/output directory: {output_dir}")
+
+        success_count = 0
+        for series_spec in series_list:
+            try:
+                if args.verbose:
+                    logger.info(f"Resolving and indexing series '{series_spec}'")
+
+                series_index = SeriesIndex(
+                    series_spec,
+                    root=args.root,
+                    cache_dir=cache_dir_str,
+                    use_cache=True,
+                    force_rebuild=getattr(args, 'rebuild', False),
+                )
+
+                index_path = output_dir / "indices" / f"{series_index.series_uid}_index.parquet"
+                if args.verbose:
+                    logger.info(
+                        f"Index ready: {index_path} "
+                        f"({series_index.instance_count} instances)"
+                    )
+                success_count += 1
+
+            except Exception as e:
+                logger.error(f"Error processing series {series_spec}: {e}")
+
+        if success_count == 0:
+            return 1
+
+        logger.info(f"Successfully built {success_count}/{len(series_list)} indices")
+        return 0
+
+    except Exception as e:
+        logger.exception(f"Error building indices: {e}")
+        return 1
+
+
+def _setup_build_index_subcommand(subparsers):
+    """
+    Setup build-index subcommand with all its arguments.
+
+    Supports two modes:
+    1. Multiple series with --cache-dir: idc-series-preview build-index SERIES1 SERIES2 ... --cache-dir /path
+    2. Single series with -o: idc-series-preview build-index SERIES -o /output/dir
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    index_parser = subparsers.add_parser(
+        "build-index",
+        help="Build DICOM series indices (cached headers for fast access)"
+    )
+
+    # Positional argument: one or more series UIDs/paths
+    index_parser.add_argument(
+        "series",
+        nargs="*",
+        metavar="SERIES",
+        help="DICOM Series UID(s) or path(s). Provide complete UIDs (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or explicit paths (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+             "Full paths override --root parameter. Required unless using --rebuild --all."
+    )
+
+    # Output options (mutually exclusive)
+    output_group = index_parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        "-o", "--output",
+        metavar="DIR",
+        help="Output directory for index file (single series only). "
+             "Index will be saved as DIR/indices/{SERIESUID}_index.parquet"
+    )
+    output_group.add_argument(
+        "--cache-dir",
+        metavar="DIR",
+        help="Cache directory for index files (multiple series). "
+             "Indices will be saved as CACHE_DIR/indices/{SERIESUID}_index.parquet"
+    )
+
+    # Storage arguments
+    index_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    index_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Force regeneration of each series index even if it already exists in the cache."
+    )
+
+    index_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="When used with --rebuild (and no series arguments), rebuild every cached index in the cache directory."
+    )
+
+    # Utility arguments
+    index_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    index_parser.set_defaults(func=build_index_command)
+
+
+def _setup_get_index_subcommand(subparsers):
+    """
+    Setup get-index subcommand to retrieve or build an index.
+
+    Args:
+        subparsers: The subparsers object from ArgumentParser
+    """
+    get_index_parser = subparsers.add_parser(
+        "get-index",
+        help="Get or create a DICOM series index and return its path"
+    )
+
+    # Positional argument: series UID/path
+    get_index_parser.add_argument(
+        "series",
+        metavar="SERIES",
+        help="DICOM Series UID or path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
+             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
+             "Full paths override --root parameter."
+    )
+
+    get_index_parser.add_argument(
+        "output",
+        nargs="?",
+        metavar="OUTPUT",
+        help="Optional destination for the index. Supports format prefixes such as 'jsonl:/tmp/out.jsonl' "
+             "or paths whose extension implies the format (parquet, json, jsonl)."
+    )
+
+    # Storage arguments
+    get_index_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
+    )
+
+    # Cache directory
+    get_index_parser.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        help="Directory to store/load DICOM series index files. "
+             "Overrides default cache location. Index files are stored in "
+             "{CACHE_DIR}/indices/{SERIESUID}_index.parquet and "
+             "loaded/generated automatically."
+    )
+
+    get_index_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Force regeneration of the series index even when a cached file already exists."
+    )
+
+    get_index_parser.add_argument(
+        "--format",
+        choices=sorted(SUPPORTED_INDEX_FORMATS),
+        help="Explicit index export format when --output is provided. "
+             "Overrides prefix/extension detection."
+    )
+
+    # Utility arguments
+    get_index_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    get_index_parser.set_defaults(func=get_index_command)
+
+
+def _setup_clear_index_subcommand(subparsers):
+    """Setup clear-index subcommand to delete cached indices."""
+    clear_parser = subparsers.add_parser(
+        "clear-index",
+        help="Delete cached index files for specific series or all cached entries"
+    )
+
+    clear_parser.add_argument(
+        "series",
+        nargs="*",
+        metavar="SERIES",
+        help="Optional complete series UIDs or explicit paths to remove from the cache"
+    )
+
+    clear_parser.add_argument(
+        "--root",
+        default="s3://idc-open-data",
+        help="Root path used when resolving SERIES inputs"
+    )
+
+    clear_parser.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        help="Cache directory containing index files (default: platform cache)"
+    )
+
+    clear_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove every cached index from the cache directory"
+    )
+
+    clear_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging"
+    )
+
+    clear_parser.set_defaults(func=clear_index_command)
+
+
+def _setup_parser():
+    """
+    Setup and configure the main argument parser with all subcommands.
+
+    Returns:
+        Configured ArgumentParser with mosaic, image, and contrast-mosaic subcommands
+    """
+    parser = argparse.ArgumentParser(
+        description="Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization.",
+        prog="idc-series-preview"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    subparsers.required = True
+
+    # Setup subcommands
+    _setup_mosaic_subcommand(subparsers)
+    _setup_image_subcommand(subparsers)
+    _setup_contrast_mosaic_subcommand(subparsers)
+    _setup_build_index_subcommand(subparsers)
+    _setup_get_index_subcommand(subparsers)
+    _setup_clear_index_subcommand(subparsers)
+
+    return parser
+
+
+def main():
+    parser = _setup_parser()
+    args = parser.parse_args()
+
+    setup_logging(args.verbose)
+    logger = logging.getLogger(__name__)
+
+    return args.func(args, logger)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
