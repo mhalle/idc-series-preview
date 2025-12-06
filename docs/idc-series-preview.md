@@ -16,6 +16,7 @@ idc-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 
 - **mosaic**: Generate tiled grids of images from a series
 - **image**: Extract single images at specific positions
+- **video**: Render canonical slices to an MP4 using ffmpeg (libx264)
 - **contrast-mosaic**: Create comparison grids with multiple contrast settings
 - **build-index**: Pre-build cached indices for faster access
 - **get-index**: Retrieve or create an index and return its path
@@ -83,7 +84,7 @@ Partial prefixes and wildcards are not supported; always specify the complete Se
 : Disable index caching. Fetches DICOM headers fresh from storage every run.
 : By default caching is enabled using `IDC_SERIES_PREVIEW_CACHE_DIR` environment variable or platform cache directory
 
-### Quality Options
+### Quality Options (Still Images)
 
 `-q, --quality LEVEL`
 : Output image compression quality (0-100).
@@ -91,6 +92,19 @@ Partial prefixes and wildcards are not supported; always specify the complete Se
 : Recommendations:
   - WebP: 20-50 (good quality-to-size ratio)
   - JPEG: 70+ (acceptable quality)
+
+### Video Options
+
+`--fps FPS`
+: Frames per second for the MP4 encoder.
+: Default: `24`
+: Accepts fractional values (e.g., `23.976`).
+: All frames are re-sampled to a consistent resolution (via `--image-width`) and streamed directly into ffmpeg.
+
+`--frames COUNT`
+: Sample exactly `COUNT` slices evenly across the normalized range.
+: Default: use every slice within `[--start, --end]`.
+: Useful when you want predictable clip duration regardless of series length.
 
 ### Utility Options
 
@@ -198,6 +212,65 @@ idc-series-preview image SERIESUID OUTPUT [OPTIONS]
 
 `--slice-offset OFFSET`
 : Offset from `--position` by number of slices (can be negative).
+
+---
+
+### video
+
+Render every slice (or a normalized subset) into an MP4 video using ffmpeg.
+
+**SYNOPSIS**
+
+```
+idc-series-preview video SERIESUID OUTPUT [OPTIONS]
+```
+
+**ARGUMENTS**
+
+`SERIESUID`
+: Series UID or full path (same formats described earlier)
+
+`OUTPUT`
+: Output path ending in `.mp4`
+
+**OPTIONS**
+
+`--fps FPS`
+: Frames per second. Default `24`.
+: Accepts integers or fractional values (`23.976` etc.)
+
+`--start POSITION`, `--end POSITION`
+: Normalized range `[0.0, 1.0]` to limit slices.
+: Defaults to the entire series.
+
+`--frames COUNT`
+: Number of frames to sample evenly across the selected range.
+: If omitted, every slice inside the range is rendered.
+
+`--image-width PIXELS`
+: Resizes each frame before encoding.
+: Default: keep the native DICOM resolution for video; specify a width to downsample.
+
+`-c/--contrast PRESET`
+: Applies presets, `auto`, `embedded`, or custom WW/WL before encoding.
+
+**EXAMPLES**
+
+```bash
+# Canonical ordering at 24fps
+idc-series-preview video 38902e14-b11f-4548-910e-771ee757dc82 series.mp4
+
+# Focus on the middle 50% at 30fps with lung preset
+idc-series-preview video 38902e14-b11f-4548-910e-771ee757dc82 lung.mp4 \
+  --start 0.25 --end 0.75 --fps 30 --contrast lung
+```
+
+**BEHAVIOR**
+
+1. All slices are visited in canonical order (using cached indices when available).
+2. When `--frames` is provided, the tool interpolates evenly spaced positions between `--start` and `--end` before rendering.
+3. Frames are rendered with the selected width/contrast and streamed directly into ffmpeg-python (`libx264`, `yuv420p`).
+4. The encoder writes MP4 files with `faststart` for progressive playback.
 : Default: `0` (no offset)
 : Examples:
   - `1` - next slice

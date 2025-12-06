@@ -14,6 +14,8 @@ import shutil
 import json
 from pathlib import Path
 
+from PIL import Image
+
 from .image_utils import MosaicRenderer, save_image
 from .contrast import ContrastPresets
 from .index_cache import get_cache_directory
@@ -22,6 +24,122 @@ from .workers import optimal_workers
 
 
 SUPPORTED_INDEX_FORMATS = {"parquet", "json", "jsonl"}
+VIDEO_FETCH_CHUNK_SIZE = 32
+VIDEO_CRF_BEST = 10
+VIDEO_CRF_WORST = 40
+
+
+def _chunked(sequence, chunk_size):
+    """Yield slices of `sequence` with at most chunk_size entries."""
+    for idx in range(0, len(sequence), chunk_size):
+        yield sequence[idx : idx + chunk_size]
+
+
+def _map_quality_to_crf(quality: int) -> int:
+    """Map user-friendly 0-100 quality into libx264 CRF (10 best, 40 worst)."""
+    clamped = max(0, min(100, quality))
+    span = VIDEO_CRF_WORST - VIDEO_CRF_BEST
+    # Higher quality -> lower CRF
+    crf = VIDEO_CRF_WORST - (clamped / 100.0) * span
+    return int(round(crf))
+
+
+def _start_ffmpeg_process(width: int, height: int, fps: float, output_path: str, *, crf: int):
+    """Start ffmpeg process that accepts rgb24 frames over stdin."""
+    try:
+        import ffmpeg
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("ffmpeg-python is required for video export") from exc
+
+    try:
+        stream = (
+            ffmpeg.input(
+                "pipe:",
+                format="rawvideo",
+                pix_fmt="rgb24",
+                s=f"{width}x{height}",
+                framerate=fps,
+            )
+            .output(
+                output_path,
+                vcodec="libx264",
+                pix_fmt="yuv420p",
+                r=fps,
+                movflags="faststart",
+                crf=crf,
+            )
+            .overwrite_output()
+            .global_args("-hide_banner", "-loglevel", "error")
+        )
+        return stream.run_async(
+            pipe_stdin=True,
+            pipe_stdout=True,
+            pipe_stderr=True,
+        )
+    except Exception as exc:  # pragma: no cover - delegated to ffmpeg
+        raise RuntimeError(f"Failed to launch ffmpeg: {exc}") from exc
+
+
+def _shutdown_ffmpeg_process(process, logger, *, report_errors=True):
+    """Close stdin and wait for ffmpeg to exit."""
+    if process is None:
+        return 0
+
+    stdin = getattr(process, "stdin", None)
+    if stdin is not None:
+        try:
+            stdin.close()
+        except BrokenPipeError:
+            pass
+        except ValueError:
+            pass
+        finally:
+            try:
+                process.stdin = None
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+    stdout = b""
+    stderr = b""
+    try:
+        stdout, stderr = process.communicate()
+    except Exception:
+        process.kill()
+        stdout, stderr = process.communicate()
+
+    if report_errors and getattr(process, "returncode", 0) != 0:
+        stderr_text = stderr.decode("utf-8", errors="ignore").strip()
+        details = f": {stderr_text}" if stderr_text else ""
+        logger.error(f"ffmpeg exited with code {process.returncode}{details}")
+        return 1
+
+    return 0
+
+
+def _select_slice_numbers_for_range(series_index, start: float, end: float):
+    """Return slice numbers whose normalized index falls inside [start, end]."""
+    index_df = series_index.index_dataframe
+
+    if "IndexNormalized" in index_df.columns:
+        normalized = index_df["IndexNormalized"].to_list()
+    else:
+        count = series_index.instance_count
+        if count <= 1:
+            normalized = [0.0]
+        else:
+            normalized = [i / (count - 1) for i in range(count)]
+
+    if "Index" in index_df.columns:
+        indices = index_df["Index"].to_list()
+    else:
+        indices = list(range(len(normalized)))
+
+    selected = []
+    for idx, norm_value in zip(indices, normalized):
+        if start <= norm_value <= end:
+            selected.append(int(idx))
+
+    return selected
 
 
 def setup_logging(verbose=False):
@@ -533,6 +651,173 @@ def image_command(args, logger):
     except Exception as e:
         logger.exception(f"Error: {e}")
         return 1
+
+
+def video_command(args, logger):
+    """Render every slice (or selected slices) into an MP4 video."""
+    try:
+        from .api import SeriesIndex, PositionInterpolator
+        from .image_utils import InstanceRenderer
+    except ImportError as e:  # pragma: no cover - import guard
+        logger.error(f"Missing dependency: {e}")
+        return 1
+
+    output_path = Path(args.output)
+    if output_path.suffix.lower() != ".mp4":
+        logger.error("Video output path must end with .mp4")
+        return 1
+
+    if args.fps <= 0:
+        logger.error("--fps must be greater than 0")
+        return 1
+
+    if args.frames is not None and args.frames < 1:
+        logger.error("--frames must be greater than 0 when provided")
+        return 1
+
+    video_quality = getattr(args, "quality", DEFAULT_IMAGE_QUALITY)
+    if video_quality is None:
+        video_quality = DEFAULT_IMAGE_QUALITY
+    if not (0 <= video_quality <= 100):
+        logger.error("--quality must be between 0 and 100")
+        return 1
+    video_crf = _map_quality_to_crf(video_quality)
+
+    # Validate range parameters
+    if not (0.0 <= args.start <= 1.0):
+        logger.error("--start must be between 0.0 and 1.0")
+        return 1
+    if not (0.0 <= args.end <= 1.0):
+        logger.error("--end must be between 0.0 and 1.0")
+        return 1
+    if args.start > args.end:
+        logger.error("--start must be less than or equal to --end")
+        return 1
+
+    window_settings = _get_window_settings_from_args(args)
+
+    if args.verbose:
+        logger.info("Encoding DICOM series to video")
+        logger.info(f"Series UID: {args.seriesuid}")
+        logger.info(f"Root: {args.root}")
+        logger.info(f"Output: {args.output}")
+        logger.info(f"FPS: {args.fps}")
+        logger.info(f"Quality: {video_quality} -> CRF {video_crf}")
+        if args.frames is not None:
+            logger.info(f"Target frames: {args.frames}")
+        if args.start > 0.0 or args.end < 1.0:
+            logger.info(f"Range: {args.start:.1%} to {args.end:.1%}")
+
+    # Create SeriesIndex with optional cache support
+    try:
+        use_cache = not getattr(args, 'no_cache', False)
+        cache_dir = getattr(args, 'cache_dir', None)
+        series_index = SeriesIndex(
+            args.seriesuid,
+            root=args.root,
+            cache_dir=cache_dir,
+            use_cache=use_cache,
+        )
+    except ValueError as e:
+        logger.error(f"Failed to initialize series index: {e}")
+        return 1
+
+    frames_requested = getattr(args, "frames", None)
+    if frames_requested:
+        interpolator = PositionInterpolator(series_index.instance_count)
+        positions, _ = interpolator.interpolate_unique(
+            frames_requested,
+            start=args.start,
+            end=args.end,
+        )
+        if not positions:
+            logger.error("Unable to interpolate frames for requested range")
+            return 1
+        selection = positions
+        selection_mode = "positions"
+    else:
+        slice_numbers = _select_slice_numbers_for_range(series_index, args.start, args.end)
+        if not slice_numbers:
+            logger.error("Requested range did not include any slices")
+            return 1
+        selection = slice_numbers
+        selection_mode = "slice_numbers"
+
+    renderer = InstanceRenderer(image_width=args.image_width, window_settings=window_settings)
+
+    ffmpeg_process = None
+    frame_size = None
+    frame_count = 0
+
+    try:
+        for chunk in _chunked(selection, VIDEO_FETCH_CHUNK_SIZE):
+            fetch_kwargs = {
+                "max_workers": optimal_workers(len(chunk), max_workers=10, min_workers=4),
+                "headers_only": False,
+            }
+            if selection_mode == "positions":
+                fetch_kwargs["positions"] = chunk
+            else:
+                fetch_kwargs["slice_numbers"] = chunk
+
+            try:
+                instances = series_index.get_instances(**fetch_kwargs)
+            except ValueError as e:
+                logger.error(f"Failed to retrieve instances: {e}")
+                _shutdown_ffmpeg_process(ffmpeg_process, logger, report_errors=False)
+                return 1
+
+            for instance in instances:
+                image = renderer.render_instance(instance.dataset)
+                if image is None:
+                    logger.error(f"Failed to render image for instance {instance.instance_uid}")
+                    _shutdown_ffmpeg_process(ffmpeg_process, logger, report_errors=False)
+                    return 1
+
+                frame = image.convert("RGB")
+                if frame_size is None:
+                    frame_size = frame.size
+                    try:
+                        ffmpeg_process = _start_ffmpeg_process(
+                            frame_size[0],
+                            frame_size[1],
+                            args.fps,
+                            args.output,
+                            crf=video_crf,
+                        )
+                    except RuntimeError as exc:
+                        logger.error(str(exc))
+                        return 1
+                    if args.verbose:
+                        logger.info(f"Video resolution: {frame_size[0]}x{frame_size[1]}")
+                elif frame.size != frame_size:
+                    frame = frame.resize(frame_size, Image.Resampling.LANCZOS)
+
+                try:
+                    ffmpeg_process.stdin.write(frame.tobytes())
+                except BrokenPipeError as e:
+                    logger.error(f"ffmpeg process terminated unexpectedly: {e}")
+                    _shutdown_ffmpeg_process(ffmpeg_process, logger, report_errors=False)
+                    return 1
+
+                frame_count += 1
+    except Exception as e:  # pragma: no cover - defensive future proofing
+        logger.exception(f"Unexpected error while encoding video: {e}")
+        _shutdown_ffmpeg_process(ffmpeg_process, logger, report_errors=False)
+        return 1
+
+    if frame_count == 0 or ffmpeg_process is None:
+        logger.error("No frames were generated for the requested range")
+        _shutdown_ffmpeg_process(ffmpeg_process, logger, report_errors=False)
+        return 1
+
+    rc = _shutdown_ffmpeg_process(ffmpeg_process, logger, report_errors=True)
+    if rc != 0:
+        return 1
+
+    if args.verbose:
+        logger.info(f"Wrote {frame_count} frames to {args.output}")
+    return 0
 
 
 def contrast_mosaic_command(args, logger):

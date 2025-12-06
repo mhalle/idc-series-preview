@@ -14,7 +14,10 @@ from idc_series_preview.cli_core import (
     _setup_contrast_mosaic_subcommand,
     _setup_mosaic_subcommand,
     mosaic_command,
+    video_command,
+    _map_quality_to_crf,
 )
+from idc_series_preview.constants import DEFAULT_IMAGE_QUALITY
 
 
 class StubSeriesIndex:
@@ -157,6 +160,252 @@ def test_mosaic_command_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
     renderer = RecordingMosaicRenderer.created[-1]
     assert renderer.tile_height == 1  # shrink from 4 to 1 row
     assert len(renderer.images) == 2
+
+
+def test_video_command_streams_slices_to_ffmpeg(monkeypatch, tmp_path):
+    requested = []
+
+    class DummySeriesIndex:
+        def __init__(self, seriesuid, root, cache_dir=None, use_cache=True):
+            self.instance_count = 3
+            self.index_dataframe = pl.DataFrame(
+                {
+                    "Index": [0, 1, 2],
+                    "IndexNormalized": [0.0, 0.5, 1.0],
+                }
+            )
+
+        def get_instances(self, slice_numbers, max_workers=None, headers_only=False):
+            requested.append(list(slice_numbers))
+            return [
+                SimpleNamespace(instance_uid=f"uid{idx}", dataset=SimpleNamespace(value=idx))
+                for idx in slice_numbers
+            ]
+
+    class DummyRenderer:
+        def __init__(self, image_width, window_settings):
+            pass
+
+        def render_instance(self, dataset):
+            color = int(dataset.value) * 40
+            return Image.new("RGB", (2, 1), color=(color, 0, 0))
+
+    class RecordingPipe:
+        def __init__(self):
+            self.frames = []
+            self.closed = False
+
+        def write(self, data):
+            self.frames.append(data)
+
+        def close(self):
+            self.closed = True
+
+    class RecordingProcess:
+        def __init__(self):
+            self.stdin = RecordingPipe()
+            self.returncode = 0
+
+        def communicate(self):
+            return (b"", b"")
+
+    ffmpeg_calls = []
+
+    def fake_start_ffmpeg_process(width, height, fps, output, crf):
+        process = RecordingProcess()
+        ffmpeg_calls.append(
+            {
+                "width": width,
+                "height": height,
+                "fps": fps,
+                "output": output,
+                "crf": crf,
+                "process": process,
+            }
+        )
+        return process
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
+    monkeypatch.setattr("idc_series_preview.image_utils.InstanceRenderer", DummyRenderer)
+    monkeypatch.setattr("idc_series_preview.cli_core._start_ffmpeg_process", fake_start_ffmpeg_process)
+
+    args = SimpleNamespace(
+        seriesuid="series",
+        output=str(tmp_path / "video.mp4"),
+        root="s3://bucket",
+        image_width=64,
+        contrast=None,
+        verbose=False,
+        cache_dir=None,
+        no_cache=False,
+        start=0.0,
+        end=1.0,
+        fps=24.0,
+        frames=None,
+        quality=DEFAULT_IMAGE_QUALITY,
+    )
+    logger = logging.getLogger("test")
+
+    rc = video_command(args, logger)
+    assert rc == 0
+    assert requested == [[0, 1, 2]]
+    assert ffmpeg_calls
+    call = ffmpeg_calls[0]
+    assert call["width"] == 2
+    assert call["height"] == 1
+    assert call["fps"] == 24.0
+    assert call["crf"] == _map_quality_to_crf(DEFAULT_IMAGE_QUALITY)
+    frames = call["process"].stdin.frames
+    assert len(frames) == 3
+    assert [frame[0] for frame in frames] == [0, 40, 80]
+
+    requested.clear()
+    ffmpeg_calls.clear()
+    args.quality = 0
+    rc = video_command(args, logger)
+    assert rc == 0
+    assert ffmpeg_calls
+    assert ffmpeg_calls[0]["crf"] == _map_quality_to_crf(0)
+
+
+def test_video_command_rejects_invalid_fps(monkeypatch, tmp_path):
+    class FailSeriesIndex:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("SeriesIndex should not be instantiated for invalid fps")
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", FailSeriesIndex)
+
+    args = SimpleNamespace(
+        seriesuid="series",
+        output=str(tmp_path / "video.mp4"),
+        root="s3://bucket",
+        image_width=64,
+        contrast=None,
+        verbose=False,
+        cache_dir=None,
+        no_cache=False,
+        start=0.0,
+        end=1.0,
+        fps=0.0,
+        frames=None,
+        quality=DEFAULT_VIDEO_QUALITY,
+    )
+    logger = logging.getLogger("test")
+
+    rc = video_command(args, logger)
+    assert rc == 1
+
+
+def test_video_command_rejects_invalid_quality(tmp_path):
+    args = SimpleNamespace(
+        seriesuid="series",
+        output=str(tmp_path / "video.mp4"),
+        root="s3://bucket",
+        image_width=64,
+        contrast=None,
+        verbose=False,
+        cache_dir=None,
+        no_cache=False,
+        start=0.0,
+        end=1.0,
+        fps=24.0,
+        frames=None,
+        quality=120,
+    )
+    logger = logging.getLogger("test")
+
+    rc = video_command(args, logger)
+    assert rc == 1
+
+
+def test_video_command_supports_frames_option(monkeypatch, tmp_path):
+    calls = []
+
+    class DummySeriesIndex:
+        def __init__(self, *args, **kwargs):
+            self.instance_count = 5
+
+        def get_instances(self, **kwargs):
+            calls.append(kwargs)
+            return [
+                SimpleNamespace(instance_uid=f"uid{i}", dataset=SimpleNamespace(value=i))
+                for i in range(len(kwargs.get("positions") or kwargs.get("slice_numbers")))
+            ]
+
+    class DummyRenderer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def render_instance(self, dataset):
+            return Image.new("RGB", (2, 2), color=(dataset.value, 0, 0))
+
+    def fake_start_ffmpeg_process(*args, **kwargs):
+        class P:
+            def __init__(self):
+                self.stdin = SimpleNamespace(write=lambda data: None, close=lambda: None)
+                self.returncode = 0
+
+            def communicate(self):
+                return (b"", b"")
+
+        return P()
+
+    class DummyInterpolator:
+        def __init__(self, _count):
+            pass
+
+        def interpolate_unique(self, count, start, end):
+            return ([start, end][:count], 0)
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
+    monkeypatch.setattr("idc_series_preview.image_utils.InstanceRenderer", DummyRenderer)
+    monkeypatch.setattr("idc_series_preview.cli_core._start_ffmpeg_process", fake_start_ffmpeg_process)
+    monkeypatch.setattr("idc_series_preview.api.PositionInterpolator", DummyInterpolator)
+
+    args = SimpleNamespace(
+        seriesuid="series",
+        output=str(tmp_path / "video.mp4"),
+        root="s3://bucket",
+        image_width=64,
+        contrast=None,
+        verbose=False,
+        cache_dir=None,
+        no_cache=False,
+        start=0.0,
+        end=1.0,
+        fps=24.0,
+        frames=2,
+        quality=80,
+    )
+    logger = logging.getLogger("test")
+
+    rc = video_command(args, logger)
+    assert rc == 0
+    assert calls
+    assert "positions" in calls[0]
+    assert calls[0]["positions"] == [0.0, 1.0]
+
+
+def test_video_command_rejects_invalid_frame_count(tmp_path):
+    args = SimpleNamespace(
+        seriesuid="series",
+        output=str(tmp_path / "video.mp4"),
+        root="s3://bucket",
+        image_width=64,
+        contrast=None,
+        verbose=False,
+        cache_dir=None,
+        no_cache=False,
+        start=0.0,
+        end=1.0,
+        fps=24.0,
+        frames=0,
+        quality=DEFAULT_IMAGE_QUALITY,
+    )
+    logger = logging.getLogger("test")
+
+    rc = video_command(args, logger)
+    assert rc == 1
 
 
 def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):

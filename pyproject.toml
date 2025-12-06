@@ -33,6 +33,7 @@ dependencies = [
     "polars>=0.20.0",
     "platformdirs>=3.0.0",
     "click>=8.1.0",
+    "ffmpeg-python>=0.2.0",
 ]
 
 [project.optional-dependencies]

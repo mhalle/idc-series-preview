@@ -17,6 +17,7 @@ from .cli_core import (
     setup_logging,
     mosaic_command,
     image_command,
+    video_command,
     contrast_mosaic_command,
     build_index_command,
     get_index_command,
@@ -41,6 +42,7 @@ def common_options(
     *,
     include_contrast: bool = True,
     image_width_default: Optional[int] = DEFAULT_IMAGE_WIDTH,
+    include_quality: bool = True,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator adding shared root/image/quality/verbose options."""
 
@@ -51,14 +53,15 @@ def common_options(
             is_flag=True,
             help="Enable detailed logging",
         )(func)
-        func = click.option(
-            "-q",
-            "--quality",
-            type=int,
-            default=DEFAULT_IMAGE_QUALITY,
-            show_default=True,
-            help="Output image quality 0-100. Recommended 70+ for JPEG",
-        )(func)
+        if include_quality:
+            func = click.option(
+                "-q",
+                "--quality",
+                type=int,
+                default=DEFAULT_IMAGE_QUALITY,
+                show_default=True,
+                help="Output image quality 0-100. Recommended 70+ for JPEG",
+            )(func)
         if include_contrast:
             func = click.option(
                 "-c",
@@ -232,6 +235,83 @@ def image_click(
         no_cache=no_cache,
         position=position,
         slice_offset=slice_offset,
+    )
+
+
+@cli.command("video")
+@click.argument("seriesuid")
+@click.argument("output")
+@common_options(include_quality=False, image_width_default=None)
+@cache_options
+@click.option(
+    "-s",
+    "--start",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Start of normalized z-position range (0.0-1.0).",
+)
+@click.option(
+    "-e",
+    "--end",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="End of normalized z-position range (0.0-1.0).",
+)
+@click.option(
+    "--fps",
+    type=float,
+    default=24.0,
+    show_default=True,
+    help="Frames per second for the output video.",
+)
+@click.option(
+    "--frames",
+    type=int,
+    help="Sample exactly this many slices evenly spaced within the range.",
+)
+@click.option(
+    "-q",
+    "--quality",
+    type=click.IntRange(0, 100),
+    default=DEFAULT_IMAGE_QUALITY,
+    show_default=True,
+    help="Video quality 0-100 (higher is better). Internally maps to libx264 CRF 40-10.",
+)
+def video_click(
+    *,
+    seriesuid: str,
+    output: str,
+    root: str,
+    image_width: Optional[int],
+    contrast: Optional[str],
+    verbose: bool,
+    cache_dir: Optional[str],
+    no_cache: bool,
+    start: float,
+    end: float,
+    fps: float,
+    frames: Optional[int],
+    quality: int,
+) -> None:
+    """Render the slices of a DICOM series into an MP4 video."""
+    _validate_cache_flags(cache_dir, no_cache)
+    _invoke_command(
+        video_command,
+        seriesuid=seriesuid,
+        output=output,
+        root=root,
+        image_width=image_width,
+        contrast=contrast,
+        verbose=verbose,
+        cache_dir=cache_dir,
+        no_cache=no_cache,
+        start=start,
+        end=end,
+        fps=fps,
+        frames=frames,
+        quality=quality,
     )
 
 

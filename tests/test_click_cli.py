@@ -64,3 +64,67 @@ def test_cache_options_conflict(monkeypatch):
 
     assert result.exit_code == 2
     assert "--cache-dir cannot be combined with --no-cache" in result.output
+
+
+def test_video_cli_invokes_core(monkeypatch):
+    captured = {}
+
+    def fake_video(args, logger):
+        captured["fps"] = args.fps
+        captured["start"] = args.start
+        captured["output"] = args.output
+        captured["frames"] = args.frames
+        captured["quality"] = args.quality
+        return 0
+
+    monkeypatch.setattr("idc_series_preview.cli_click.video_command", fake_video)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "series",
+            "video.mp4",
+            "--fps",
+            "30",
+            "--start",
+            "0.1",
+            "--end",
+            "0.9",
+            "--frames",
+            "12",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["fps"] == 30
+    assert captured["start"] == 0.1
+    assert captured["output"] == "video.mp4"
+    assert captured["frames"] == 12
+    assert captured["quality"] == 23
+
+
+def test_video_cli_accepts_quality_option(monkeypatch):
+    captured = {}
+
+    def fake_video(args, logger):
+        captured["quality"] = args.quality
+        return 0
+
+    monkeypatch.setattr("idc_series_preview.cli_click.video_command", fake_video)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "series",
+            "video.mp4",
+            "--quality",
+            "18",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["quality"] == 18
