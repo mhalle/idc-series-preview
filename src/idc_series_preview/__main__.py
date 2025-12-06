@@ -1004,23 +1004,8 @@ def _setup_contrast_mosaic_subcommand(subparsers):
              "Negative values supported (e.g., '1500/-500'). At least one -c/--contrast is required."
     )
 
-    # Output format arguments
-    contrast_parser.add_argument(
-        "-q", "--quality",
-        type=int,
-        default=DEFAULT_IMAGE_QUALITY,
-        help=f"Output image quality 0-100. Default: {DEFAULT_IMAGE_QUALITY} for WebP, 70+ recommended for JPEG"
-    )
-
     # Index caching arguments
     add_cache_arguments(contrast_parser)
-
-    # Utility arguments
-    contrast_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable detailed logging"
-    )
 
     contrast_parser.set_defaults(func=contrast_mosaic_command)
 
