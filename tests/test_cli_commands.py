@@ -670,3 +670,80 @@ def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
     renderer = RecordingGridRenderer.created[-1]
     assert renderer.tile_height == 2
     assert len(renderer.images) == 4
+
+
+def test_contrast_mosaic_respects_shrink_to_fit(monkeypatch, tmp_path):
+    class DummySeriesIndex:
+        def __init__(self, seriesuid, root, cache_dir=None, use_cache=True):
+            self.instance_count = 2
+
+        def get_instances(self, positions, max_workers=None, headers_only=False):
+            return [
+                SimpleNamespace(instance_uid=f"uid{i}", dataset=object())
+                for i in range(len(positions))
+            ]
+
+    class DummyRenderer:
+        def __init__(self, image_width, window_settings):
+            pass
+
+        def render_instance(self, dataset):
+            return Image.new("L", (4, 4))
+
+    class DummyGridRenderer:
+        def __init__(self, tile_width, tile_height, image_width):
+            pass
+
+        def tile_images(self, images):
+            return Image.new("L", (8, 8))
+
+    saved = []
+
+    def fake_save_image(image, output, quality=85):
+        saved.append((output, quality))
+        return True
+
+    shrink_calls = []
+
+    def fake_resize(image, target_width, target_height, *, shrink_only):
+        shrink_calls.append(
+            (target_width, target_height, shrink_only),
+        )
+        assert shrink_only is True
+        assert target_width == 400
+        assert target_height == 200
+        return image
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
+    monkeypatch.setattr("idc_series_preview.image_utils.InstanceRenderer", DummyRenderer)
+    monkeypatch.setattr("idc_series_preview.image_utils.MosaicRenderer", DummyGridRenderer)
+    monkeypatch.setattr("idc_series_preview.cli_core.save_image", fake_save_image)
+    monkeypatch.setattr(
+        "idc_series_preview.cli_core._resize_canvas_if_needed",
+        fake_resize,
+    )
+
+    args = SimpleNamespace(
+        seriesuid="series",
+        output=str(tmp_path / "grid.webp"),
+        root="s3://bucket",
+        width=400,
+        height=200,
+        shrink_to_fit=True,
+        contrast=["lung", "bone"],
+        quality=75,
+        verbose=False,
+        position=None,
+        slice_offset=0,
+        start=0.0,
+        end=1.0,
+        samples=2,
+        cache_dir=None,
+        no_cache=False,
+    )
+    logger = logging.getLogger("test")
+
+    rc = contrast_mosaic_command(args, logger)
+    assert rc == 0
+    assert saved
+    assert shrink_calls and shrink_calls[-1][2] is True

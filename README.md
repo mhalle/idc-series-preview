@@ -70,6 +70,7 @@ All commands share:
 
 Imaging commands also expose:
 - `--width` / `--height` to size the final artifact (per-frame for `image`/`video`, full canvas for mosaics)
+- `--shrink-to-fit` (mosaic + contrast-mosaic) to avoid padding when both width and height are specified
 - `-n/--samples` to control how many slices are rendered when sampling a range
 - `-q/--quality` for raster outputs (mapped to CRF for `video`)
 - `-c/--contrast` where applicable, plus `--fps` for the `video` encoder

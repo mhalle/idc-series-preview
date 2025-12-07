@@ -66,6 +66,9 @@ Partial prefixes and wildcards are not supported; always specify the complete Se
 `--height PIXELS`
 : Optional total canvas height. When provided with `--width`, both dimensions are enforced; otherwise the missing dimension is derived from the rendered aspect ratio.
 
+`--shrink-to-fit`
+: For mosaics and contrast grids, scale the rendered image down to fit within `--width`/`--height` without padding. The final canvas may be smaller than requested but never stretches or distorts the imagery.
+
 ### Sampling Options
 
 `-n/--samples COUNT`
@@ -437,6 +440,9 @@ idc-series-preview contrast-mosaic SERIESUID OUTPUT -c/--contrast PRESET [-c/--c
 
 `--width/--height`
 : Total grid size. Width defaults to `len(contrasts) * 256`; height auto-scales unless explicitly provided.
+
+`--shrink-to-fit`
+: Avoid padding when both width and height are specified. The grid is scaled uniformly so it fits inside the requested dimensions without distortion. Any leftover canvas space is dropped instead of filled.
 
 **EXAMPLES**
 

@@ -564,7 +564,12 @@ def mosaic_command(args, logger):
             logger.error("Failed to tile images")
             return 1
 
-        output_image = _resize_canvas_if_needed(output_image, args.width, args.height)
+        output_image = _resize_canvas_if_needed(
+            output_image,
+            args.width,
+            args.height,
+            shrink_only=getattr(args, "shrink_to_fit", False),
+        )
 
         if args.verbose:
             logger.info(f"Saving mosaic to {args.output}...")
@@ -1092,7 +1097,12 @@ def contrast_mosaic_command(args, logger):
             logger.error("Failed to tile images into grid")
             return 1
 
-        output_image = _resize_canvas_if_needed(output_image, args.width, args.height)
+        output_image = _resize_canvas_if_needed(
+            output_image,
+            args.width,
+            args.height,
+            shrink_only=getattr(args, "shrink_to_fit", False),
+        )
 
         # Save output
         if args.verbose:
