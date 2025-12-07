@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from datetime import date, datetime
 from decimal import Decimal
+from fnmatch import fnmatchcase
 
 from PIL import Image
 
@@ -774,17 +775,33 @@ def header_command(args, logger):
     requested_tags = [tag for tag in getattr(args, "tags", []) if tag]
     if requested_tags:
         lookup = {key.lower(): key for key in normalized_row.keys()}
+        ordered_keys = list(normalized_row.keys())
         filtered = {}
         missing = []
         for tag in requested_tags:
-            key = lookup.get(tag.lower())
-            if key is not None:
-                filtered[key] = normalized_row[key]
-            else:
-                missing.append(tag)
+            lower_tag = tag.lower()
+            is_glob = any(ch in tag for ch in "*?[")
+            if not is_glob:
+                key = lookup.get(lower_tag)
+                if key is not None:
+                    filtered[key] = normalized_row[key]
+                else:
+                    missing.append(tag)
+                continue
+
+            matched = False
+            for candidate in ordered_keys:
+                if fnmatchcase(candidate.lower(), lower_tag):
+                    filtered[candidate] = normalized_row[candidate]
+                    matched = True
+            if not matched:
+                # Glob patterns are implicitly quiet; no warning
+                continue
+
         normalized_row = filtered
-        if missing and not getattr(args, "quiet", False):
-            logger.warning("Tags not found in index: %s", ", ".join(missing))
+        exact_missing = [tag for tag in missing if not any(ch in tag for ch in "*?[")]
+        if exact_missing and not getattr(args, "quiet", False):
+            logger.warning("Tags not found in index: %s", ", ".join(exact_missing))
 
     indent = HEADER_DEFAULT_INDENT if args.indent is None else args.indent
     json_text = json.dumps(normalized_row, indent=indent if indent > 0 else None)
