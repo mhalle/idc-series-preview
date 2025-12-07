@@ -16,6 +16,7 @@ from idc_series_preview.cli_core import (
     header_command,
     video_command,
     _map_quality_to_crf,
+    _resize_canvas_if_needed,
 )
 from idc_series_preview.constants import DEFAULT_IMAGE_QUALITY
 
@@ -585,6 +586,14 @@ def test_video_command_rejects_invalid_sample_count(tmp_path):
 
     rc = video_command(args, logger)
     assert rc == 1
+
+
+def test_resize_canvas_pads_without_stretch():
+    img = Image.new("RGB", (200, 100), color=(255, 0, 0))
+    resized = _resize_canvas_if_needed(img, 300, 300)
+    assert resized.size == (300, 300)
+    assert resized.getpixel((10, 10)) == (0, 0, 0)  # padded border
+    assert resized.getpixel((150, 150)) == (255, 0, 0)
 
 
 def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):

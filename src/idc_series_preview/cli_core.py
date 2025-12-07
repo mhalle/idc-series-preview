@@ -224,15 +224,35 @@ def _resolve_grid_dimensions(slice_count: int, columns: int | None, rows: int | 
     return columns, rows
 
 
-def _resize_canvas_if_needed(image, target_width: int | None, target_height: int | None):
+def _resize_canvas_if_needed(
+    image,
+    target_width: int | None,
+    target_height: int | None,
+    *,
+    shrink_only: bool = False,
+):
     """Resize the given PIL image if target dimensions are provided."""
     if target_width is None and target_height is None:
         return image
 
     width, height = image.size
+    resized = image
+
     if target_width is not None and target_height is not None:
-        new_size = (max(1, target_width), max(1, target_height))
-    elif target_width is not None:
+        scale = min(target_width / width, target_height / height)
+        scale = max(scale, 0)
+        new_width = max(1, int(round(width * scale)))
+        new_height = max(1, int(round(height * scale)))
+        if new_width != width or new_height != height:
+            resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        if shrink_only or (new_width == target_width and new_height == target_height):
+            return resized
+        canvas = Image.new(image.mode, (target_width, target_height), color=0)
+        offset = ((target_width - new_width) // 2, (target_height - new_height) // 2)
+        canvas.paste(resized, offset)
+        return canvas
+
+    if target_width is not None:
         new_height = max(1, int(round(height * (target_width / width))))
         new_size = (max(1, target_width), new_height)
     else:
