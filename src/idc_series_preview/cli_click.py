@@ -159,6 +159,11 @@ def cli() -> None:
     type=int,
     help="Optional mosaic height in pixels.",
 )
+@click.option(
+    "--shrink-to-fit",
+    is_flag=True,
+    help="Scale down to fit within width/height without padding.",
+)
 def mosaic_click(
     *,
     seriesuid: str,
@@ -174,6 +179,7 @@ def mosaic_click(
     rows: Optional[int],
     width: Optional[int],
     height: Optional[int],
+    shrink_to_fit: bool,
     cache_dir: Optional[str],
     no_cache: bool,
 ) -> None:
@@ -194,6 +200,7 @@ def mosaic_click(
         rows=rows,
         width=width,
         height=height,
+        shrink_to_fit=shrink_to_fit,
         cache_dir=cache_dir,
         no_cache=no_cache,
     )
@@ -484,6 +491,11 @@ def video_click(
     type=int,
     help="Optional grid height in pixels.",
 )
+@click.option(
+    "--shrink-to-fit",
+    is_flag=True,
+    help="Scale down to fit within width/height without padding.",
+)
 def contrast_mosaic_click(
     *,
     seriesuid: str,
@@ -501,6 +513,7 @@ def contrast_mosaic_click(
     samples: int,
     width: Optional[int],
     height: Optional[int],
+    shrink_to_fit: bool,
 ) -> None:
     """Create a grid of a DICOM instance under multiple contrast settings."""
     _validate_cache_flags(cache_dir, no_cache)
@@ -521,6 +534,7 @@ def contrast_mosaic_click(
         samples=samples,
         width=width,
         height=height,
+        shrink_to_fit=shrink_to_fit,
     )
 
 
