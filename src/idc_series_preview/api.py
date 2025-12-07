@@ -7,7 +7,11 @@ import numpy as np
 import polars as pl
 import pydicom
 from PIL import Image
-from pydicom.pixel_data_handlers.util import apply_modality_lut
+try:
+    # pydicom >=3.0
+    from pydicom.pixels import apply_modality_lut
+except ImportError:  # pragma: no cover - fallback for older pydicom
+    from pydicom.pixel_data_handlers.util import apply_modality_lut
 
 from .series_spec import parse_and_normalize_series
 from .index_cache import load_or_generate_index

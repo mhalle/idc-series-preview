@@ -6,7 +6,11 @@ from typing import List, Tuple, Optional, Union, Dict
 import numpy as np
 from PIL import Image
 import pydicom
-from pydicom.pixel_data_handlers.util import apply_modality_lut, apply_windowing
+try:
+    # pydicom >=3.0
+    from pydicom.pixels import apply_modality_lut, apply_windowing
+except ImportError:  # pragma: no cover - fallback for older pydicom
+    from pydicom.pixel_data_handlers.util import apply_modality_lut, apply_windowing
 
 from .contrast import ContrastPresets
 
