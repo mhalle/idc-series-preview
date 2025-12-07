@@ -94,8 +94,8 @@ class ContrastPresets:
             Dict with 'window_width' and 'window_center'
         """
         # Use percentile-based approach for auto-detection
-        p2 = np.percentile(pixel_array, 2)
-        p98 = np.percentile(pixel_array, 98)
+        p2 = np.nanpercentile(pixel_array, 2)
+        p98 = np.nanpercentile(pixel_array, 98)
 
         window_center = (p2 + p98) / 2
         window_width = p98 - p2

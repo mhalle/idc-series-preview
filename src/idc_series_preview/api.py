@@ -7,6 +7,7 @@ import numpy as np
 import polars as pl
 import pydicom
 from PIL import Image
+from pydicom.pixel_data_handlers.util import apply_modality_lut
 
 from .series_spec import parse_and_normalize_series
 from .index_cache import load_or_generate_index
@@ -313,17 +314,7 @@ class Instance:
             If pixel array cannot be extracted
         """
         try:
-            pixel_array = self.dataset.pixel_array
-
-            # Handle DICOM rescale/slope/intercept
-            if hasattr(self.dataset, "RescaleSlope") and hasattr(
-                self.dataset, "RescaleIntercept"
-            ):
-                slope = float(self.dataset.RescaleSlope)
-                intercept = float(self.dataset.RescaleIntercept)
-                pixel_array = pixel_array * slope + intercept
-
-            return pixel_array
+            return apply_modality_lut(self.dataset.pixel_array, self.dataset)
 
         except Exception as e:
             raise ValueError(f"Failed to extract pixel array: {e}")

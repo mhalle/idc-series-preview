@@ -6,6 +6,7 @@ from typing import List, Tuple, Optional, Union, Dict
 import numpy as np
 from PIL import Image
 import pydicom
+from pydicom.pixel_data_handlers.util import apply_modality_lut, apply_windowing
 
 from .contrast import ContrastPresets
 
@@ -111,13 +112,8 @@ class InstanceRenderer:
             NumPy array of pixel values or None
         """
         try:
-            pixel_array = ds.pixel_array
-
-            # Handle DICOM rescale/slope/intercept
-            if hasattr(ds, 'RescaleSlope') and hasattr(ds, 'RescaleIntercept'):
-                slope = float(ds.RescaleSlope)
-                intercept = float(ds.RescaleIntercept)
-                pixel_array = pixel_array * slope + intercept
+            # Use pydicom's modality LUT handling (slope/intercept, LUTs, per-frame)
+            pixel_array = apply_modality_lut(ds.pixel_array, ds)
 
             return pixel_array
 
@@ -143,6 +139,16 @@ class InstanceRenderer:
         Returns:
             Dict with window_width and window_center
         """
+        # Remove padding from stats when available
+        if ds is not None and hasattr(ds, "PixelPaddingValue"):
+            padding = ds.PixelPaddingValue
+            if hasattr(ds, "PixelPaddingRangeLimit"):
+                lo, hi = sorted([padding, ds.PixelPaddingRangeLimit])
+                mask = (pixel_array >= lo) & (pixel_array <= hi)
+            else:
+                mask = pixel_array == padding
+            pixel_array = np.where(mask, np.nan, pixel_array)
+
         # If user explicitly requests embedded window/level
         if self.window_settings == "embedded":
             # Try to get from file first
@@ -219,15 +225,34 @@ class InstanceRenderer:
         Returns:
             PIL Image object
         """
-        # Get window settings for this image
-        window_settings = self._get_window_settings(pixel_array, ds)
+        # Prefer DICOM VOI/LUT when using embedded/default behavior and dataset is available
+        has_voi = False
+        if ds is not None:
+            has_voi = hasattr(ds, "VOILUTSequence") or hasattr(ds, "WindowCenter")
 
-        # Apply windowing
-        windowed = ContrastPresets.apply_windowing(
-            pixel_array,
-            window_settings['window_width'],
-            window_settings['window_center'],
-        )
+        if ds is not None and (self.window_settings is None or self.window_settings == "embedded") and has_voi:
+            try:
+                windowed = apply_windowing(
+                    pixel_array,
+                    ds,
+                    out_dtype=np.uint8,
+                    out_min_max=(0, 255),
+                )
+            except Exception as e:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"apply_windowing failed, falling back to custom windowing: {e}")
+                windowed = None
+        else:
+            windowed = None
+
+        # Fall back to user presets/auto/custom handling
+        if windowed is None:
+            window_settings = self._get_window_settings(pixel_array, ds)
+            windowed = ContrastPresets.apply_windowing(
+                pixel_array,
+                window_settings['window_width'],
+                window_settings['window_center'],
+            )
 
         # Ensure uint8 dtype
         if windowed.dtype != np.uint8:
