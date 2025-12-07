@@ -148,11 +148,13 @@ def cli() -> None:
     help="Force a specific number of mosaic rows.",
 )
 @click.option(
+    "-w",
     "--width",
     type=int,
     help="Total mosaic width in pixels.",
 )
 @click.option(
+    "-h",
     "--height",
     type=int,
     help="Optional mosaic height in pixels.",
@@ -203,6 +205,7 @@ def mosaic_click(
 @common_options()
 @cache_options
 @click.option(
+    "-w",
     "--width",
     type=int,
     help="Width of the output image in pixels.",
@@ -375,6 +378,7 @@ def header_click(
     help="Number of frames to sample evenly across the range.",
 )
 @click.option(
+    "-w",
     "--width",
     type=int,
     help="Frame width in pixels.",
@@ -469,11 +473,13 @@ def video_click(
     help="Contrast settings (repeatable) such as 'ct-lung', 'auto', or '1500/500'.",
 )
 @click.option(
+    "-w",
     "--width",
     type=int,
     help="Total grid width in pixels.",
 )
 @click.option(
+    "-h",
     "--height",
     type=int,
     help="Optional grid height in pixels.",
