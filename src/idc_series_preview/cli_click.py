@@ -17,6 +17,7 @@ from .cli_core import (
     setup_logging,
     mosaic_command,
     image_command,
+    header_command,
     video_command,
     contrast_mosaic_command,
     build_index_command,
@@ -235,6 +236,84 @@ def image_click(
         no_cache=no_cache,
         position=position,
         slice_offset=slice_offset,
+    )
+
+
+@cli.command("header")
+@click.argument("seriesuid")
+@cache_options
+@click.option(
+    "--root",
+    default="s3://idc-open-data",
+    show_default=True,
+    help="Root path for DICOM files (S3, HTTP, or local path).",
+)
+@click.option(
+    "-p",
+    "--position",
+    type=float,
+    required=True,
+    help="Normalized z-position (0.0-1.0) used to select the instance.",
+)
+@click.option(
+    "--slice-offset",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Offset from --position by number of slices.",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=str),
+    help="Optional JSON file destination; defaults to stdout.",
+)
+@click.option(
+    "--indent",
+    type=int,
+    default=2,
+    show_default=True,
+    help="JSON indentation (0 disables pretty printing).",
+)
+@click.option(
+    "-t",
+    "--tag",
+    multiple=True,
+    help="Restrict output to specific DICOM keywords (repeatable).",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    help="Enable detailed logging.",
+)
+def header_click(
+    *,
+    seriesuid: str,
+    root: str,
+    cache_dir: Optional[str],
+    no_cache: bool,
+    position: float,
+    slice_offset: int,
+    output: Optional[str],
+    indent: int,
+    tag: tuple[str, ...],
+    verbose: bool,
+) -> None:
+    """Print header metadata for a single instance selected by position."""
+    _validate_cache_flags(cache_dir, no_cache)
+    _invoke_command(
+        header_command,
+        seriesuid=seriesuid,
+        root=root,
+        cache_dir=cache_dir,
+        no_cache=no_cache,
+        position=position,
+        slice_offset=slice_offset,
+        output=output,
+        indent=indent,
+        tags=list(tag),
+        verbose=verbose,
     )
 
 

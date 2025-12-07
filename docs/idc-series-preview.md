@@ -16,6 +16,7 @@ idc-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 
 - **mosaic**: Generate tiled grids of images from a series
 - **image**: Extract single images at specific positions
+- **header**: Export cached header metadata for a specific slice (JSON)
 - **video**: Render canonical slices to an MP4 using ffmpeg (libx264)
 - **contrast-mosaic**: Create comparison grids with multiple contrast settings
 - **build-index**: Pre-build cached indices for faster access
@@ -212,6 +213,49 @@ idc-series-preview image SERIESUID OUTPUT [OPTIONS]
 
 `--slice-offset OFFSET`
 : Offset from `--position` by number of slices (can be negative).
+
+---
+
+### header
+
+Export the cached header metadata (from the parquet index) for the instance closest to a given position.
+
+**SYNOPSIS**
+
+```
+idc-series-preview header SERIESUID --position POS [OPTIONS]
+```
+
+**ARGUMENTS**
+
+`SERIESUID`
+: Series UID or fully-qualified path.
+
+**OPTIONS**
+
+`-p/--position`
+: Normalized z-position (0.0-1.0) used to locate the slice. Required.
+
+`--slice-offset`
+: Integer offset from the resolved slice (positive or negative). Default `0`.
+
+`--output header.json`
+: Optional JSON file destination. When omitted, the header is printed to stdout.
+
+`--indent N`
+: JSON indentation (default `2`; set to `0` for compact output).
+
+`-t/--tag KEYWORD`
+: Filter output to the specified DICOM keywords (repeatable). Case-insensitive.
+
+`--root`, `--cache-dir`, `--no-cache`, `-v/--verbose`
+: Same semantics as other commands.
+
+**BEHAVIOR**
+
+1. Builds or reuses the cached index for the requested series (no pixel data fetched).
+2. Finds the slice whose normalized index is closest to `--position`, applies `--slice-offset`, and serializes the entire row (all cached header fields) to JSON.
+3. Writes to stdout or the file specified via `--output`.
 
 ---
 

@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,8 @@ from idc_series_preview.cli_core import (
     _setup_contrast_mosaic_subcommand,
     _setup_mosaic_subcommand,
     mosaic_command,
+    image_command,
+    header_command,
     video_command,
     _map_quality_to_crf,
 )
@@ -85,6 +88,112 @@ def test_build_index_command_respects_cache_dir(tmp_path):
 
     expected = cache_dir / "indices" / "series-a_index.parquet"
     assert expected.is_file()
+
+
+def test_header_command_writes_json(monkeypatch, tmp_path):
+    class DummySeriesIndex:
+        def __init__(self, *args, **kwargs):
+            self.index_dataframe = pl.DataFrame(
+                {
+                    "IndexNormalized": [0.0, 0.5, 1.0],
+                    "SeriesUID": ["a", "b", "c"],
+                    "Custom": ["first", "middle", "last"],
+                    "WindowWidth": [1500, 1400, 1300],
+                }
+            )
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
+
+    output_path = tmp_path / "header.json"
+    args = SimpleNamespace(
+        seriesuid="series",
+        root="s3://bucket",
+        cache_dir=None,
+        no_cache=False,
+        position=0.6,
+        slice_offset=0,
+        output=str(output_path),
+        indent=2,
+        tags=[],
+        verbose=False,
+    )
+    logger = logging.getLogger("test")
+
+    rc = header_command(args, logger)
+    assert rc == 0
+    data = json.loads(output_path.read_text())
+    assert data["Custom"] == "middle"
+    assert data["WindowWidth"] == 1400
+
+
+def test_header_command_respects_slice_offset(monkeypatch, capsys):
+    class DummySeriesIndex:
+        def __init__(self, *args, **kwargs):
+            self.index_dataframe = pl.DataFrame(
+                {
+                    "IndexNormalized": [0.0, 0.5, 1.0],
+                    "Value": [1, 2, 3],
+                }
+            )
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
+
+    args = SimpleNamespace(
+        seriesuid="series",
+        root="s3://bucket",
+        cache_dir=None,
+        no_cache=False,
+        position=0.4,
+        slice_offset=1,
+        output=None,
+        indent=0,
+        tags=[],
+        verbose=False,
+    )
+    logger = logging.getLogger("test")
+
+    rc = header_command(args, logger)
+    assert rc == 0
+    captured = capsys.readouterr().out
+    assert '"Value": 3' in captured or '"Value":3' in captured
+
+
+def test_header_command_filters_tags(monkeypatch, tmp_path, caplog):
+    class DummySeriesIndex:
+        def __init__(self, *args, **kwargs):
+            self.index_dataframe = pl.DataFrame(
+                {
+                    "IndexNormalized": [0.0, 0.5],
+                    "SeriesUID": ["one", "two"],
+                    "WindowWidth": [1200, 1100],
+                    "WindowCenter": [600, 550],
+                }
+            )
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
+
+    output_path = tmp_path / "tags.json"
+    args = SimpleNamespace(
+        seriesuid="series",
+        root="s3://bucket",
+        cache_dir=None,
+        no_cache=False,
+        position=0.4,
+        slice_offset=0,
+        output=str(output_path),
+        indent=2,
+        tags=["WindowWidth", "MissingTag"],
+        verbose=True,
+    )
+    logger = logging.getLogger("test")
+
+    with caplog.at_level(logging.WARNING):
+        rc = header_command(args, logger)
+    assert rc == 0
+    data = json.loads(output_path.read_text())
+    assert list(data.keys()) == ["WindowWidth"]
+    assert data["WindowWidth"] == 1100
+    assert "MissingTag" in caplog.text
 
 
 def test_mosaic_command_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):

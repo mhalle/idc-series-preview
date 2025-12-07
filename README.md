@@ -39,6 +39,9 @@ uv run idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice.jpg \
 uv run idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 cmp.webp \
   --position 0.5 -c lung -c bone -c mediastinum
 
+# Export the header for the middle slice
+uv run idc-series-preview header 38902e14-b11f-4548-910e-771ee757dc82 -p 0.5 --output header.json
+
 # Encode every slice into a 24fps MP4, sampling 120 frames
 uv run idc-series-preview video 38902e14-b11f-4548-910e-771ee757dc82 series.mp4 --fps 24 --frames 120
 
@@ -53,6 +56,7 @@ uv run idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
 | --- | --- |
 | `mosaic` | Evenly sample a series and tile the images into a WebP/JPEG grid. Automatically shrinks rows when the requested range has fewer slices than slots. |
 | `image` | Grab a single slice by normalized position with optional slice-offset. |
+| `header` | Dump selected cached header metadata for a specific slice as JSON (stdout or file, optionally filtered via `--tag`). |
 | `video` | Render each slice (or N evenly spaced frames) into an MP4 using ffmpeg (libx264) with configurable FPS. |
 | `contrast-mosaic` | Compare one or more slices across multiple window/level presets. |
 | `build-index` | Create parquet indices (`indices/{uid}_index.parquet`) for faster later access. |

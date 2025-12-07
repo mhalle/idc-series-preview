@@ -128,3 +128,41 @@ def test_video_cli_accepts_quality_option(monkeypatch):
 
     assert result.exit_code == 0
     assert captured["quality"] == 18
+
+
+def test_header_cli_invokes_core(monkeypatch):
+    captured = {}
+
+    def fake_header(args, logger):
+        captured["position"] = args.position
+        captured["slice_offset"] = args.slice_offset
+        captured["output"] = args.output
+        captured["tags"] = args.tags
+        return 0
+
+    monkeypatch.setattr("idc_series_preview.cli_click.header_command", fake_header)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "header",
+            "series",
+            "-p",
+            "0.5",
+            "--slice-offset",
+            "1",
+            "--output",
+            "header.json",
+            "--tag",
+            "SeriesUID",
+            "--tag",
+            "WindowWidth",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["position"] == 0.5
+    assert captured["slice_offset"] == 1
+    assert captured["output"] == "header.json"
+    assert captured["tags"] == ["SeriesUID", "WindowWidth"]

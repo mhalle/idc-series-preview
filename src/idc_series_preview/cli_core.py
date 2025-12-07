@@ -13,6 +13,8 @@ import math
 import shutil
 import json
 from pathlib import Path
+from datetime import date, datetime
+from decimal import Decimal
 
 from PIL import Image
 
@@ -27,6 +29,7 @@ SUPPORTED_INDEX_FORMATS = {"parquet", "json", "jsonl"}
 VIDEO_FETCH_CHUNK_SIZE = 32
 VIDEO_CRF_BEST = 10
 VIDEO_CRF_WORST = 40
+HEADER_DEFAULT_INDENT = 2
 
 
 def _chunked(sequence, chunk_size):
@@ -42,6 +45,68 @@ def _map_quality_to_crf(quality: int) -> int:
     # Higher quality -> lower CRF
     crf = VIDEO_CRF_WORST - (clamped / 100.0) * span
     return int(round(crf))
+
+
+def _normalize_json_value(value):
+    """Convert Polars/pydicom/native values into JSON-serializable equivalents."""
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {k: _normalize_json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_json_value(v) for v in value]
+    if hasattr(value, "tolist"):
+        try:
+            return _normalize_json_value(value.tolist())
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _convert_header_value(value):
+    """Convert pydicom values into JSON-serializable structures."""
+    from pydicom.dataset import Dataset
+    from pydicom.sequence import Sequence
+    from pydicom.multival import MultiValue
+
+    if value is None:
+        return None
+    if isinstance(value, Dataset):
+        return _dataset_to_header_dict(value)
+    if isinstance(value, Sequence):
+        return [_dataset_to_header_dict(item) for item in value]
+    if isinstance(value, MultiValue) or isinstance(value, (list, tuple)):
+        return [_convert_header_value(item) for item in value]
+    if hasattr(value, "tolist"):
+        try:
+            return value.tolist()
+        except Exception:
+            return str(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex()
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _dataset_to_header_dict(dataset):
+    """Serialize a pydicom Dataset into a JSON-friendly dictionary."""
+    header = {}
+    for element in dataset:
+        keyword = element.keyword or element.name or str(element.tag)
+        if keyword == "PixelData":
+            continue
+        header[keyword] = _convert_header_value(element.value)
+    return header
 
 
 def _start_ffmpeg_process(width: int, height: int, fps: float, output_path: str, *, crf: int):
@@ -651,6 +716,89 @@ def image_command(args, logger):
     except Exception as e:
         logger.exception(f"Error: {e}")
         return 1
+
+
+def header_command(args, logger):
+    """Export cached header information for a single instance."""
+    try:
+        from .api import SeriesIndex
+    except ImportError as e:  # pragma: no cover
+        logger.error(f"Missing dependency: {e}")
+        return 1
+
+    if not (0.0 <= args.position <= 1.0):
+        logger.error("--position must be between 0.0 and 1.0")
+        return 1
+
+    if args.verbose:
+        logger.info("Exporting instance header from index")
+        logger.info(f"Series UID: {args.seriesuid}")
+        logger.info(f"Root: {args.root}")
+        logger.info(f"Position: {args.position:.1%}")
+        if args.slice_offset:
+            logger.info(f"Slice offset: {args.slice_offset}")
+
+    try:
+        use_cache = not getattr(args, "no_cache", False)
+        cache_dir = getattr(args, "cache_dir", None)
+        series_index = SeriesIndex(
+            args.seriesuid,
+            root=args.root,
+            cache_dir=cache_dir,
+            use_cache=use_cache,
+        )
+    except ValueError as e:
+        logger.error(f"Failed to initialize series index: {e}")
+        return 1
+
+    index_df = series_index.index_dataframe
+    if "IndexNormalized" not in index_df.columns:
+        logger.error("Index does not contain normalized positions")
+        return 1
+
+    normalized = index_df["IndexNormalized"].to_list()
+    if not normalized:
+        logger.error("Series index is empty")
+        return 1
+
+    target = args.position
+    closest_idx = min(range(len(normalized)), key=lambda i: abs(normalized[i] - target))
+    slice_idx = closest_idx + args.slice_offset
+    if not (0 <= slice_idx < len(normalized)):
+        logger.error("Slice selection is outside the series bounds")
+        return 1
+
+    row_dict = index_df[slice_idx : slice_idx + 1].to_dicts()[0]
+    normalized_row = {key: _normalize_json_value(value) for key, value in row_dict.items()}
+
+    requested_tags = [tag for tag in getattr(args, "tags", []) if tag]
+    if requested_tags:
+        lookup = {key.lower(): key for key in normalized_row.keys()}
+        filtered = {}
+        missing = []
+        for tag in requested_tags:
+            key = lookup.get(tag.lower())
+            if key is not None:
+                filtered[key] = normalized_row[key]
+            else:
+                missing.append(tag)
+        normalized_row = filtered
+        if missing:
+            logger.warning("Tags not found in index: %s", ", ".join(missing))
+
+    indent = HEADER_DEFAULT_INDENT if args.indent is None else args.indent
+    json_text = json.dumps(normalized_row, indent=indent if indent > 0 else None)
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json_text)
+        if args.verbose:
+            logger.info(f"Header written to {output_path}")
+    else:
+        print(json_text)
+
+    return 0
 
 
 def video_command(args, logger):
