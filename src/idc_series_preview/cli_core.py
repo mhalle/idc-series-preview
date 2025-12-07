@@ -783,7 +783,7 @@ def header_command(args, logger):
             else:
                 missing.append(tag)
         normalized_row = filtered
-        if missing:
+        if missing and not getattr(args, "quiet", False):
             logger.warning("Tags not found in index: %s", ", ".join(missing))
 
     indent = HEADER_DEFAULT_INDENT if args.indent is None else args.indent

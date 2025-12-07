@@ -183,6 +183,7 @@ def test_header_command_filters_tags(monkeypatch, tmp_path, caplog):
         output=str(output_path),
         indent=2,
         tags=["WindowWidth", "MissingTag"],
+        quiet=False,
         verbose=True,
     )
     logger = logging.getLogger("test")
@@ -194,6 +195,40 @@ def test_header_command_filters_tags(monkeypatch, tmp_path, caplog):
     assert list(data.keys()) == ["WindowWidth"]
     assert data["WindowWidth"] == 1100
     assert "MissingTag" in caplog.text
+
+
+def test_header_command_quiet_suppresses_warning(monkeypatch, tmp_path, caplog):
+    class DummySeriesIndex:
+        def __init__(self, *args, **kwargs):
+            self.index_dataframe = pl.DataFrame(
+                {
+                    "IndexNormalized": [0.0, 0.5],
+                    "SeriesUID": ["one", "two"],
+                }
+            )
+
+    monkeypatch.setattr("idc_series_preview.api.SeriesIndex", DummySeriesIndex)
+
+    output_path = tmp_path / "tags.json"
+    args = SimpleNamespace(
+        seriesuid="series",
+        root="s3://bucket",
+        cache_dir=None,
+        no_cache=False,
+        position=0.4,
+        slice_offset=0,
+        output=str(output_path),
+        indent=2,
+        tags=["MissingTag"],
+        quiet=True,
+        verbose=True,
+    )
+    logger = logging.getLogger("test")
+
+    with caplog.at_level(logging.WARNING):
+        rc = header_command(args, logger)
+    assert rc == 0
+    assert caplog.text == ""
 
 
 def test_mosaic_command_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):

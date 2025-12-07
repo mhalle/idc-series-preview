@@ -287,6 +287,11 @@ def image_click(
     is_flag=True,
     help="Enable detailed logging.",
 )
+@click.option(
+    "--quiet",
+    is_flag=True,
+    help="Suppress warnings when requested tags are missing.",
+)
 def header_click(
     *,
     seriesuid: str,
@@ -298,6 +303,7 @@ def header_click(
     output: Optional[str],
     indent: int,
     tag: tuple[str, ...],
+    quiet: bool,
     verbose: bool,
 ) -> None:
     """Print header metadata for a single instance selected by position."""
@@ -313,6 +319,7 @@ def header_click(
         output=output,
         indent=indent,
         tags=list(tag),
+        quiet=quiet,
         verbose=verbose,
     )
 

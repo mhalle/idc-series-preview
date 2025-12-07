@@ -247,6 +247,7 @@ idc-series-preview header SERIESUID --position POS [OPTIONS]
 
 `-t/--tag KEYWORD`
 : Filter output to the specified DICOM keywords (repeatable). Case-insensitive.
+: Use `--quiet` to suppress warnings when a requested tag is absent.
 
 `--root`, `--cache-dir`, `--no-cache`, `-v/--verbose`
 : Same semantics as other commands.

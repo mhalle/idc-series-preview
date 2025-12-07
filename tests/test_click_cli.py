@@ -138,6 +138,7 @@ def test_header_cli_invokes_core(monkeypatch):
         captured["slice_offset"] = args.slice_offset
         captured["output"] = args.output
         captured["tags"] = args.tags
+        captured["quiet"] = args.quiet
         return 0
 
     monkeypatch.setattr("idc_series_preview.cli_click.header_command", fake_header)
@@ -158,6 +159,7 @@ def test_header_cli_invokes_core(monkeypatch):
             "SeriesUID",
             "--tag",
             "WindowWidth",
+            "--quiet",
         ],
     )
 
@@ -166,3 +168,4 @@ def test_header_cli_invokes_core(monkeypatch):
     assert captured["slice_offset"] == 1
     assert captured["output"] == "header.json"
     assert captured["tags"] == ["SeriesUID", "WindowWidth"]
+    assert captured["quiet"] is True

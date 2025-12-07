@@ -56,7 +56,7 @@ uv run idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
 | --- | --- |
 | `mosaic` | Evenly sample a series and tile the images into a WebP/JPEG grid. Automatically shrinks rows when the requested range has fewer slices than slots. |
 | `image` | Grab a single slice by normalized position with optional slice-offset. |
-| `header` | Dump selected cached header metadata for a specific slice as JSON (stdout or file, optionally filtered via `--tag`). |
+| `header` | Dump selected cached header metadata for a specific slice as JSON (stdout or file, optionally filtered via `--tag`, use `--quiet` to suppress missing-tag warnings). |
 | `video` | Render each slice (or N evenly spaced frames) into an MP4 using ffmpeg (libx264) with configurable FPS. |
 | `contrast-mosaic` | Compare one or more slices across multiple window/level presets. |
 | `build-index` | Create parquet indices (`indices/{uid}_index.parquet`) for faster later access. |
