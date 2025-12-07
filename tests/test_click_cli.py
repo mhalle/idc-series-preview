@@ -8,7 +8,8 @@ def test_mosaic_cli_invokes_core(monkeypatch):
 
     def fake_mosaic(args, logger):
         captured["seriesuid"] = args.seriesuid
-        captured["tile_width"] = args.tile_width
+        captured["samples"] = args.samples
+        captured["columns"] = args.columns
         return 0
 
     monkeypatch.setattr("idc_series_preview.cli_click.mosaic_command", fake_mosaic)
@@ -22,14 +23,17 @@ def test_mosaic_cli_invokes_core(monkeypatch):
             "out.webp",
             "--root",
             "s3://custom",
-            "--tile-width",
+            "--samples",
+            "12",
+            "--columns",
             "4",
         ],
     )
 
     assert result.exit_code == 0
     assert captured["seriesuid"] == "38902e14-b11f-4548-910e-771ee757dc82"
-    assert captured["tile_width"] == 4
+    assert captured["samples"] == 12
+    assert captured["columns"] == 4
 
 
 def test_mosaic_cli_maps_nonzero_exit_to_click_exception(monkeypatch):
@@ -73,7 +77,8 @@ def test_video_cli_invokes_core(monkeypatch):
         captured["fps"] = args.fps
         captured["start"] = args.start
         captured["output"] = args.output
-        captured["frames"] = args.frames
+        captured["samples"] = args.samples
+        captured["width"] = args.width
         captured["quality"] = args.quality
         return 0
 
@@ -92,8 +97,10 @@ def test_video_cli_invokes_core(monkeypatch):
             "0.1",
             "--end",
             "0.9",
-            "--frames",
+            "--samples",
             "12",
+            "--width",
+            "320",
         ],
     )
 
@@ -101,7 +108,8 @@ def test_video_cli_invokes_core(monkeypatch):
     assert captured["fps"] == 30
     assert captured["start"] == 0.1
     assert captured["output"] == "video.mp4"
-    assert captured["frames"] == 12
+    assert captured["samples"] == 12
+    assert captured["width"] == 320
     assert captured["quality"] == 60
 
 

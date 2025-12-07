@@ -56,12 +56,27 @@ Partial prefixes and wildcards are not supported; always specify the complete Se
   - `/data/dicom` or `file:///data/dicom` (local)
 : Note: only IDC (S3) paths are officially tested today; HTTP and local paths are experimental.
 
-### Image Output Options
+### Canvas Options
 
-`--image-width PIXELS`
-: Width of each image or tile in pixels. Height is scaled proportionally to maintain aspect ratio.
-: Default: `256` for mosaic/contrast commands. The `image` subcommand keeps the natural DICOM size unless you specify `--image-width`.
-: Larger values produce higher-quality output but larger files
+`--width PIXELS`
+: Total canvas width for mosaics/contrast grids, or per-frame width for single-image/video commands.
+: Defaults to the native slice width for single frames and a reasonable tiling width for mosaics.
+: Larger values produce higher-quality output but larger files.
+
+`--height PIXELS`
+: Optional total canvas height. When provided with `--width`, both dimensions are enforced; otherwise the missing dimension is derived from the rendered aspect ratio.
+
+### Sampling Options
+
+`-n/--samples COUNT`
+: Number of slices to sample evenly across `--start/--end`. Applies to `mosaic`, `video`, and the range mode of `contrast-mosaic`.
+: Defaults to 36 for mosaics, 120 for video, and 1 for contrast grids.
+
+`--columns COUNT`
+: For mosaics, force a specific number of columns. Rows are derived automatically (and vice versa when `--rows` is supplied).
+
+`--rows COUNT`
+: For mosaics, force the number of rows. Combined with `--columns`, this locks the grid size (excess samples are truncated; missing slices shrink the grid).
 
 ### Contrast Options
 
@@ -100,11 +115,10 @@ Partial prefixes and wildcards are not supported; always specify the complete Se
 : Frames per second for the MP4 encoder.
 : Default: `24`
 : Accepts fractional values (e.g., `23.976`).
-: All frames are re-sampled to a consistent resolution (via `--image-width`) and streamed directly into ffmpeg.
+: All frames are re-sampled to a consistent resolution (via `--width`) and streamed directly into ffmpeg.
 
-`--frames COUNT`
-: Sample exactly `COUNT` slices evenly across the normalized range.
-: Default: use every slice within `[--start, --end]`.
+: `-n/--samples COUNT`
+: Sample exactly `COUNT` slices evenly across the normalized range (`video` default: 120).
 : Useful when you want predictable clip duration regardless of series length.
 
 ### Utility Options
@@ -134,16 +148,18 @@ idc-series-preview mosaic SERIESUID OUTPUT [OPTIONS]
 
 **OPTIONS**
 
-`-t/--tile-width WIDTH`
-: Number of images per row in the mosaic grid.
-: Default: `3`
+: `-n/--samples COUNT`
+: Number of slices to sample evenly across the range.
+: Default: `36`
 
-`-t/--tile-height HEIGHT`
-: Number of images per column in the mosaic grid.
-: Default: Same as `--tile-width`
-: If the requested range doesn't contain enough unique slices to fill the
-  grid, idc-series-preview automatically reduces the mosaic height so rows
-  aren't filled with duplicate images.
+`--columns COUNT`
+: Force a specific number of columns. Rows are derived automatically unless you also provide `--rows`.
+
+`--rows COUNT`
+: Force a specific number of rows. Combined with `--columns`, this locks the grid size (excess samples are truncated; missing slices shrink the grid automatically).
+
+`--width/--height`
+: Total mosaic size. Width defaults to a sensible canvas width; height auto-scales unless you provide an explicit value.
 
 `--start POSITION`
 : Start of normalized z-position range (0.0-1.0). 0.0 is superior (head), 1.0 is inferior (tail).
@@ -162,11 +178,11 @@ idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp
 
 # Custom grid: 8 columns, 5 rows
 idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
-  --tile-width 8 --tile-height 5
+  --samples 40 --columns 8 --rows 5
 
 # Smaller tiles with better image width
 idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
-  --image-width 256 --tile-width 4 --tile-height 4
+  --samples 16 --columns 4 --rows 4 --width 1024
 
 # Middle 60% of series with lung contrast
 idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
@@ -174,7 +190,7 @@ idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.webp \
 
 # High-quality output
 idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.jpg \
-  --quality 80 --image-width 200
+  --quality 80 --width 1200
 ```
 
 **BEHAVIOR**
@@ -182,7 +198,7 @@ idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 mosaic.jpg \
 1. All instances are sorted by z-position (spatial location), then by instance number
 2. Instances are evenly distributed across the normalized range `[--start, --end]`
 3. Requested grid size determines how many instances are selected
-4. Missing instances result in blank tiles
+4. If the requested range yields fewer unique slices than `--samples`, the grid shrinks automatically instead of duplicating tiles.
 5. Contrast settings are applied uniformly to all tiles
 
 ---
@@ -213,6 +229,9 @@ idc-series-preview image SERIESUID OUTPUT [OPTIONS]
 
 `--slice-offset OFFSET`
 : Offset from `--position` by number of slices (can be negative).
+
+`--width PIXELS`
+: Desired frame width. Defaults to the native DICOM width if omitted.
 
 ---
 
@@ -288,13 +307,12 @@ idc-series-preview video SERIESUID OUTPUT [OPTIONS]
 : Normalized range `[0.0, 1.0]` to limit slices.
 : Defaults to the entire series.
 
-`--frames COUNT`
+: `-n/--samples COUNT`
 : Number of frames to sample evenly across the selected range.
-: If omitted, every slice inside the range is rendered.
+: Default: `120`
 
-`--image-width PIXELS`
-: Resizes each frame before encoding.
-: Default: keep the native DICOM resolution for video; specify a width to downsample.
+`--width PIXELS`
+: Frame width during rendering. Defaults to the native DICOM width; specify to downsample.
 
 `-c/--contrast PRESET`
 : Applies presets, `auto`, `embedded`, or custom WW/WL before encoding.
@@ -313,7 +331,7 @@ idc-series-preview video 38902e14-b11f-4548-910e-771ee757dc82 lung.mp4 \
 **BEHAVIOR**
 
 1. All slices are visited in canonical order (using cached indices when available).
-2. When `--frames` is provided, the tool interpolates evenly spaced positions between `--start` and `--end` before rendering.
+2. The tool interpolates `--samples` evenly spaced positions between `--start` and `--end` before rendering.
 3. Frames are rendered with the selected width/contrast and streamed directly into ffmpeg-python (`libx264`, `yuv420p`).
 4. The encoder writes MP4 files with `faststart` for progressive playback.
 : Default: `0` (no offset)
@@ -347,7 +365,7 @@ idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice_-1.webp \
 
 # High-resolution single image
 idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 hires.jpg \
-  --position 0.5 --image-width 512 --quality 85
+  --position 0.5 --width 512 --quality 85
 ```
 
 **BEHAVIOR**
@@ -396,19 +414,15 @@ idc-series-preview contrast-mosaic SERIESUID OUTPUT -c/--contrast PRESET [-c/--c
 
 `--start POSITION`
 : Start of z-position range (0.0-1.0).
-: Creates multiple rows of instances
+: Creates multiple rows of instances.
 
 `--end POSITION`
 : End of z-position range (0.0-1.0).
 : Default: `1.0`
 
-`-t/--tile-height HEIGHT`
-: Number of instances per column (rows).
-: Only used with `--start`/`--end`.
-: Default: `2`
-: If the requested range contains fewer unique slices than `HEIGHT`,
-  idc-series-preview automatically reduces the number of rows instead of
-  repeating identical images.
+: `-n/--samples COUNT`
+: Number of slices to sample within the specified range (default: 1).
+: If the range contains fewer unique slices than requested, idc-series-preview shrinks the grid instead of repeating images.
 
 **Contrast Settings:**
 
@@ -421,6 +435,9 @@ idc-series-preview contrast-mosaic SERIESUID OUTPUT -c/--contrast PRESET [-c/--c
   - `--contrast auto --contrast embedded`
   - `--contrast 1500/500 --contrast 2000/300`
 
+`--width/--height`
+: Total grid size. Width defaults to `len(contrasts) * 256`; height auto-scales unless explicitly provided.
+
 **EXAMPLES**
 
 ```bash
@@ -431,7 +448,7 @@ idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 contrast
 
 # Range of instances with 2 contrasts (2 instances × 2 contrasts = 2x2 grid)
 idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 comparison.webp \
-  --start 0.3 --end 0.7 --tile-height 2 \
+  --start 0.3 --end 0.7 --samples 2 \
   --contrast ct-brain --contrast ct-abdomen
 
 # Four contrasts of middle image
@@ -454,7 +471,7 @@ idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 custom.w
 
 1. Grid layout: contrasts on x-axis (columns), instances on y-axis (rows)
 2. Single instance mode: 1 row, N columns (where N = number of contrasts)
-3. Range mode: M rows (M = tile-height), N columns (N = number of contrasts)
+3. Range mode: M rows (M = number of sampled slices), N columns (N = number of contrasts)
 4. Each cell is rendered independently with its contrast setting
 5. Contrast settings are applied uniformly across instances
 
@@ -914,8 +931,8 @@ idc-series-preview mosaic SERIES output.webp -v
 ### Optimization Tips
 
 - Use `--cache-dir` to reuse indices across multiple commands
-- Use `--image-width 64-128` for faster preview operations
-- Use `--tile-width/height` appropriate for use case (don't request huge grids)
+- Use smaller `--width` values (512-1024) for faster preview mosaics/videos
+- Keep `--samples` modest or specify `--columns/--rows` appropriate for your use case
 - Smaller `--quality` values (20-30) for fast preview, larger (50+) for archival
 
 ### Quality Settings
@@ -973,7 +990,7 @@ idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 analysis
 
 # View multiple slices in one image
 idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 multi_slice.webp \
-  --tile-width 4 --tile-height 4 --image-width 192 \
+  --samples 16 --columns 4 --rows 4 --width 768 \
   --start 0.3 --end 0.7
 ```
 

@@ -6,8 +6,6 @@ Preview DICOM series stored on S3, HTTP, or local files with intelligent samplin
 and visualization. Supports both tiled mosaics and individual image extraction.
 """
 
-import argparse
-import sys
 import logging
 import math
 import shutil
@@ -22,7 +20,7 @@ from PIL import Image
 from .image_utils import MosaicRenderer, save_image
 from .contrast import ContrastPresets
 from .index_cache import get_cache_directory
-from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_MOSAIC_TILE_SIZE, DEFAULT_IMAGE_QUALITY
+from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_QUALITY
 from .workers import optimal_workers
 
 
@@ -182,30 +180,68 @@ def _shutdown_ffmpeg_process(process, logger, *, report_errors=True):
     return 0
 
 
-def _select_slice_numbers_for_range(series_index, start: float, end: float):
-    """Return slice numbers whose normalized index falls inside [start, end]."""
-    index_df = series_index.index_dataframe
+def _generate_positions(series_index, samples: int, start: float, end: float):
+    """Return evenly spaced normalized positions within [start, end]."""
+    from .api import PositionInterpolator
 
-    if "IndexNormalized" in index_df.columns:
-        normalized = index_df["IndexNormalized"].to_list()
+    if samples < 1:
+        raise ValueError("--samples must be >= 1")
+
+    interp = PositionInterpolator(series_index.instance_count)
+    positions, _ = interp.interpolate_unique(
+        samples,
+        start=start,
+        end=end,
+    )
+    if not positions:
+        raise ValueError("Requested range did not produce any slices")
+    return positions
+
+
+def _resolve_grid_dimensions(slice_count: int, columns: int | None, rows: int | None):
+    """Determine column/row counts for mosaics."""
+    if slice_count < 1:
+        raise ValueError("No slices available to layout")
+
+    if columns is not None and columns < 1:
+        raise ValueError("--columns must be >= 1")
+    if rows is not None and rows < 1:
+        raise ValueError("--rows must be >= 1")
+
+    if columns is None and rows is None:
+        columns = max(1, math.ceil(math.sqrt(slice_count)))
+        rows = max(1, math.ceil(slice_count / columns))
+    elif columns is None:
+        rows = max(1, rows)
+        columns = max(1, math.ceil(slice_count / rows))
+    elif rows is None:
+        columns = max(1, columns)
+        rows = max(1, math.ceil(slice_count / columns))
     else:
-        count = series_index.instance_count
-        if count <= 1:
-            normalized = [0.0]
-        else:
-            normalized = [i / (count - 1) for i in range(count)]
+        columns = max(1, columns)
+        rows = max(1, rows)
 
-    if "Index" in index_df.columns:
-        indices = index_df["Index"].to_list()
+    return columns, rows
+
+
+def _resize_canvas_if_needed(image, target_width: int | None, target_height: int | None):
+    """Resize the given PIL image if target dimensions are provided."""
+    if target_width is None and target_height is None:
+        return image
+
+    width, height = image.size
+    if target_width is not None and target_height is not None:
+        new_size = (max(1, target_width), max(1, target_height))
+    elif target_width is not None:
+        new_height = max(1, int(round(height * (target_width / width))))
+        new_size = (max(1, target_width), new_height)
     else:
-        indices = list(range(len(normalized)))
+        new_width = max(1, int(round(width * (target_height / height))))
+        new_size = (new_width, max(1, target_height))
 
-    selected = []
-    for idx, norm_value in zip(indices, normalized):
-        if start <= norm_value <= end:
-            selected.append(int(idx))
-
-    return selected
+    if new_size == image.size:
+        return image
+    return image.resize(new_size, Image.Resampling.LANCZOS)
 
 
 def setup_logging(verbose=False):
@@ -217,96 +253,6 @@ def setup_logging(verbose=False):
         format=format_str
     )
 
-
-def add_common_arguments(parser, *, include_contrast=True, image_width_default=DEFAULT_IMAGE_WIDTH):
-    """Add shared arguments to a parser (series, output, root, sizing, contrast, quality, verbose)."""
-    parser.add_argument(
-        "seriesuid",
-        help="DICOM Series UID or full path. Provide the complete UID (e.g., 38902e14-b11f-4548-910e-771ee757dc82) "
-             "or an explicit path (e.g., s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82). "
-             "Full paths override --root parameter."
-    )
-    parser.add_argument(
-        "output",
-        help="Output image path (.webp or .jpg)"
-    )
-
-    # Storage arguments
-    parser.add_argument(
-        "--root",
-        default="s3://idc-open-data",
-        help="Root path for DICOM files (S3, HTTP, or local path). Default: s3://idc-open-data"
-    )
-
-    # Image scaling (shared)
-    parser.add_argument(
-        "-w", "--image-width",
-        type=int,
-        default=image_width_default,
-        help="Width of each image in pixels. Height is scaled proportionally."
-    )
-
-    # Contrast parameters (shared)
-    if include_contrast:
-        parser.add_argument(
-            "-c", "--contrast",
-            help="Contrast settings: CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
-                 "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
-                 "shortcut (soft for ct-soft-tissue, media for ct-mediastinum, t1/t2/proton for MR), "
-                 "'auto' for auto-detection, 'embedded' for DICOM file window/level, "
-                 "or custom window/level values (e.g., '1500/500' or '1500,-500'). "
-                 "Supports both slash (medical standard) and comma separators."
-        )
-
-    # Output format arguments
-    parser.add_argument(
-        "-q", "--quality",
-        type=int,
-        default=DEFAULT_IMAGE_QUALITY,
-        help=f"Output image quality 0-100. Default: {DEFAULT_IMAGE_QUALITY} for WebP, 70+ recommended for JPEG"
-    )
-
-    # Utility arguments
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable detailed logging"
-    )
-
-
-def add_range_arguments(parser):
-    """Add range selection arguments (--start, --end)."""
-    parser.add_argument(
-        "-s", "--start",
-        type=float,
-        default=0.0,
-        help="Start of normalized z-position range (0.0-1.0). Default: 0.0 (beginning of series)"
-    )
-    parser.add_argument(
-        "-e", "--end",
-        type=float,
-        default=1.0,
-        help="End of normalized z-position range (0.0-1.0). Default: 1.0 (end of series)"
-    )
-
-
-def add_cache_arguments(parser):
-    """Add caching arguments (--cache-dir, --no-cache)."""
-    cache_group = parser.add_mutually_exclusive_group()
-    cache_group.add_argument(
-        "--cache-dir",
-        metavar="PATH",
-        help="Directory to store/load DICOM series index files. "
-             "Overrides default cache location. Index files are stored in "
-             "{CACHE_DIR}/indices/{SERIESUID}_index.parquet and loaded/generated automatically."
-    )
-    cache_group.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="Disable index caching. Fetches headers fresh from storage on every run. "
-             "By default, caching is enabled using IDC_SERIES_PREVIEW_CACHE_DIR env var "
-             "or platform-specific cache directory."
-    )
 
 
 def _split_format_prefix(output_value: str):
@@ -471,15 +417,13 @@ def _get_window_settings_from_args(args):
 def mosaic_command(args, logger):
     """Generate a tiled mosaic from a DICOM series."""
     try:
-        from .api import SeriesIndex, PositionInterpolator
+        from .api import SeriesIndex
 
-        # Validate output format
         output_path = Path(args.output)
         if not _validate_output_format(output_path):
             logger.error("Output file must be .webp or .jpg/.jpeg")
             return 1
 
-        # Validate range parameters
         if not (0.0 <= args.start <= 1.0):
             logger.error("--start must be between 0.0 and 1.0")
             return 1
@@ -489,31 +433,20 @@ def mosaic_command(args, logger):
         if args.start > args.end:
             logger.error("--start must be less than or equal to --end")
             return 1
-
-        # Determine tile dimensions
-        tile_width = max(1, args.tile_width)
-        if args.tile_height is not None and args.tile_height < 1:
-            logger.error("--tile-height must be >= 1 when provided")
-            return 1
-        tile_height = args.tile_height if args.tile_height else tile_width
-
-        if tile_width < 1:
-            logger.error("--tile-width must be >= 1")
+        if args.samples < 1:
+            logger.error("--samples must be >= 1")
             return 1
 
-        # Get window/center settings
         window_settings = _get_window_settings_from_args(args)
 
         if args.verbose:
-            logger.info(f"Generating DICOM series mosaic")
+            logger.info("Generating DICOM series mosaic")
             logger.info(f"Series UID: {args.seriesuid}")
             logger.info(f"Root: {args.root}")
-            logger.info(f"Tile grid: {tile_width}x{tile_height}")
-            logger.info(f"Tile width: {args.image_width}px")
+            logger.info(f"Requested samples: {args.samples}")
             if args.start > 0.0 or args.end < 1.0:
                 logger.info(f"Range: {args.start:.1%} to {args.end:.1%} of series")
 
-        # Create SeriesIndex with optional cache support
         try:
             use_cache = not getattr(args, 'no_cache', False)
             cache_dir = getattr(args, 'cache_dir', None)
@@ -527,43 +460,50 @@ def mosaic_command(args, logger):
             logger.error(f"Failed to initialize series index: {e}")
             return 1
 
-        if args.verbose:
-            logger.info(f"Series has {series_index.instance_count} instances")
-
-        # Generate evenly-spaced positions for the mosaic, removing duplicates
-        requested_tiles = tile_width * tile_height
-        interp = PositionInterpolator(series_index.instance_count)
-        positions, _ = interp.interpolate_unique(
-            requested_tiles,
-            start=args.start,
-            end=args.end,
-        )
-
-        if not positions:
-            logger.error(
-                "Requested range did not produce any slices. Verify --start/--end."
+        try:
+            positions = _generate_positions(
+                series_index,
+                args.samples,
+                args.start,
+                args.end,
             )
+        except ValueError as e:
+            logger.error(str(e))
             return 1
 
-        unique_count = len(positions)
-        effective_tile_height = max(1, math.ceil(unique_count / tile_width))
+        actual_slices = len(positions)
+        try:
+            columns, rows = _resolve_grid_dimensions(actual_slices, args.columns, args.rows)
+        except ValueError as e:
+            logger.error(str(e))
+            return 1
 
-        if args.verbose and unique_count < requested_tiles:
-            logger.info(
-                "Range %.1f%%-%.1f%% provides %d unique slices; "
-                "shrinking mosaic height to %d rows"
-                % (args.start * 100, args.end * 100, unique_count, effective_tile_height)
-            )
+        max_tiles = columns * rows
+        if actual_slices > max_tiles:
+            positions = positions[:max_tiles]
+            actual_slices = len(positions)
+            if args.verbose:
+                logger.info(
+                    "Limiting mosaic to %d slices to fit %d x %d grid",
+                    actual_slices,
+                    columns,
+                    rows,
+                )
 
-        # Retrieve and render images
+        tile_pixel_width = args.width
+        if tile_pixel_width:
+            tile_pixel_width = max(1, tile_pixel_width // columns)
+        else:
+            tile_pixel_width = max(1, 768 // columns)
+
         if args.verbose:
-            logger.info(f"Retrieving and rendering {len(positions)} images...")
+            logger.info(f"Grid layout: {columns}x{rows} (columns x rows)")
+            if args.width:
+                logger.info(f"Target canvas width: {args.width}px")
+            if args.height:
+                logger.info(f"Target canvas height: {args.height}px")
 
-        # Optimize worker count for this mosaic size (min 5, max 10)
-        mosaic_workers = optimal_workers(len(positions), max_workers=10, min_workers=5)
-        if args.verbose:
-            logger.debug(f"Using {mosaic_workers} workers for {len(positions)} images")
-
+        mosaic_workers = optimal_workers(actual_slices, max_workers=10, min_workers=5)
         try:
             instances = series_index.get_instances(
                 positions=positions,
@@ -580,7 +520,7 @@ def mosaic_command(args, logger):
 
         from .image_utils import InstanceRenderer, MosaicRenderer
 
-        renderer = InstanceRenderer(image_width=args.image_width, window_settings=window_settings)
+        renderer = InstanceRenderer(image_width=tile_pixel_width, window_settings=window_settings)
         images = []
         for instance in instances:
             img = renderer.render_instance(instance.dataset)
@@ -592,19 +532,20 @@ def mosaic_command(args, logger):
         if args.verbose:
             logger.info(f"Retrieved and rendered {len(images)} images")
             logger.info("Tiling images into mosaic...")
+
         generator = MosaicRenderer(
-            tile_width=tile_width,
-            tile_height=effective_tile_height,
-            image_width=args.image_width,
+            tile_width=columns,
+            tile_height=rows,
+            image_width=tile_pixel_width,
         )
 
         output_image = generator.tile_images(images)
-
         if not output_image:
             logger.error("Failed to tile images")
             return 1
 
-        # Save output
+        output_image = _resize_canvas_if_needed(output_image, args.width, args.height)
+
         if args.verbose:
             logger.info(f"Saving mosaic to {args.output}...")
         if not save_image(
@@ -689,7 +630,7 @@ def image_command(args, logger):
         try:
             from .image_utils import InstanceRenderer
 
-            renderer = InstanceRenderer(image_width=args.image_width, window_settings=window_settings)
+            renderer = InstanceRenderer(image_width=args.width, window_settings=window_settings)
             output_image = renderer.render_instance(instance.dataset)
         except ValueError as e:
             logger.error(f"Failed to generate image: {e}")
@@ -836,8 +777,8 @@ def video_command(args, logger):
         logger.error("--fps must be greater than 0")
         return 1
 
-    if args.frames is not None and args.frames < 1:
-        logger.error("--frames must be greater than 0 when provided")
+    if args.samples < 1:
+        logger.error("--samples must be >= 1")
         return 1
 
     video_quality = getattr(args, "quality", DEFAULT_IMAGE_QUALITY)
@@ -868,8 +809,7 @@ def video_command(args, logger):
         logger.info(f"Output: {args.output}")
         logger.info(f"FPS: {args.fps}")
         logger.info(f"Quality: {video_quality} -> CRF {video_crf}")
-        if args.frames is not None:
-            logger.info(f"Target frames: {args.frames}")
+        logger.info(f"Target frames: {args.samples}")
         if args.start > 0.0 or args.end < 1.0:
             logger.info(f"Range: {args.start:.1%} to {args.end:.1%}")
 
@@ -887,43 +827,34 @@ def video_command(args, logger):
         logger.error(f"Failed to initialize series index: {e}")
         return 1
 
-    frames_requested = getattr(args, "frames", None)
-    if frames_requested:
-        interpolator = PositionInterpolator(series_index.instance_count)
-        positions, _ = interpolator.interpolate_unique(
-            frames_requested,
-            start=args.start,
-            end=args.end,
-        )
-        if not positions:
-            logger.error("Unable to interpolate frames for requested range")
-            return 1
-        selection = positions
-        selection_mode = "positions"
-    else:
-        slice_numbers = _select_slice_numbers_for_range(series_index, args.start, args.end)
-        if not slice_numbers:
-            logger.error("Requested range did not include any slices")
-            return 1
-        selection = slice_numbers
-        selection_mode = "slice_numbers"
-
-    renderer = InstanceRenderer(image_width=args.image_width, window_settings=window_settings)
+    interpolator = PositionInterpolator(series_index.instance_count)
+    positions, _ = interpolator.interpolate_unique(
+        args.samples,
+        start=args.start,
+        end=args.end,
+    )
+    if not positions:
+        logger.error("Unable to interpolate frames for requested range")
+        return 1
+    selection = positions
+    selection_mode = "positions"
 
     ffmpeg_process = None
     frame_size = None
     frame_count = 0
+    from .image_utils import InstanceRenderer
+    renderer = InstanceRenderer(
+        image_width=args.width if args.width is not None else DEFAULT_IMAGE_WIDTH,
+        window_settings=window_settings,
+    )
 
     try:
         for chunk in _chunked(selection, VIDEO_FETCH_CHUNK_SIZE):
             fetch_kwargs = {
                 "max_workers": optimal_workers(len(chunk), max_workers=10, min_workers=4),
                 "headers_only": False,
+                "positions": chunk,
             }
-            if selection_mode == "positions":
-                fetch_kwargs["positions"] = chunk
-            else:
-                fetch_kwargs["slice_numbers"] = chunk
 
             try:
                 instances = series_index.get_instances(**fetch_kwargs)
@@ -991,24 +922,12 @@ def contrast_mosaic_command(args, logger):
     Grid layout: contrasts on x-axis (columns), instances on y-axis (rows).
     """
     try:
-        from .api import SeriesIndex, PositionInterpolator
+        from .api import SeriesIndex
 
         # Validate output format
         output_path = Path(args.output)
         if not _validate_output_format(output_path):
             logger.error("Output file must be .webp or .jpg/.jpeg")
-            return 1
-
-        # Validate mutually exclusive position vs range selection
-        has_position = args.position is not None
-        has_range = args.start is not None or args.end is not None
-
-        if has_position and has_range:
-            logger.error("Cannot use both --position and --start/--end together")
-            return 1
-
-        if not has_position and not has_range:
-            logger.error("Must specify either --position or --start/--end")
             return 1
 
         # Validate contrast settings
@@ -1041,95 +960,48 @@ def contrast_mosaic_command(args, logger):
             logger.error(f"Failed to initialize series index: {e}")
             return 1
 
-        # Determine instance selection mode
-        instances = []
-        tile_height = args.tile_height if args.tile_height and args.tile_height > 0 else 1
-
-        if has_position:
-            # Single position mode
+        instances: list[Any] = []
+        if args.position is not None:
             if not (0.0 <= args.position <= 1.0):
                 logger.error("--position must be between 0.0 and 1.0")
                 return 1
-
-            if args.slice_offset != 0:
-                if args.verbose:
-                    logger.info(f"Will apply slice offset: {args.slice_offset}")
-
-            tile_height = 1
-
             if args.verbose:
-                logger.info(f"Generating contrast grid from DICOM series")
-                logger.info(f"Series UID: {args.seriesuid}")
-                logger.info(f"Root: {args.root}")
-                logger.info(f"Position: {args.position:.1%}")
-                logger.info(f"Contrast variations: {len(parsed_contrasts)}")
-
-            # Retrieve single instance at position with optional offset
-            if args.verbose:
-                logger.info("Retrieving DICOM instance...")
+                logger.info("Generating contrast grid from single position %.1f%%", args.position * 100)
             try:
                 instance = series_index.get_instance(
                     position=args.position,
-                    slice_offset=args.slice_offset
+                    slice_offset=args.slice_offset,
                 )
                 instances = [instance]
             except ValueError as e:
                 logger.error(f"Failed to retrieve instance: {e}")
                 return 1
-
-            if args.verbose:
-                logger.info(f"Retrieved instance {instances[0].instance_uid}")
-
         else:
-            # Range selection mode
+            start = args.start if args.start is not None else 0.0
+            end = args.end if args.end is not None else 1.0
+            if not (0.0 <= start <= 1.0) or not (0.0 <= end <= 1.0) or start > end:
+                logger.error("Provide a valid --start/--end range within 0.0-1.0")
+                return 1
+            if args.samples < 1:
+                logger.error("--samples must be >= 1")
+                return 1
             if args.slice_offset != 0:
-                logger.error("--slice-offset is not allowed with --start/--end")
-                return 1
-
-            # Validate range parameters
-            if not (0.0 <= args.start <= 1.0):
-                logger.error("--start must be between 0.0 and 1.0")
-                return 1
-            if not (0.0 <= args.end <= 1.0):
-                logger.error("--end must be between 0.0 and 1.0")
-                return 1
-            if args.start > args.end:
-                logger.error("--start must be less than or equal to --end")
+                logger.error("--slice-offset can only be used with --position")
                 return 1
 
             if args.verbose:
-                logger.info(f"Generating contrast grid from DICOM series")
-                logger.info(f"Series UID: {args.seriesuid}")
-                logger.info(f"Root: {args.root}")
-                logger.info(f"Range: {args.start:.1%} to {args.end:.1%}")
-                logger.info(f"Requested tile height (instances): {tile_height}")
-                logger.info(f"Contrast variations: {len(parsed_contrasts)}")
-
-            # Generate evenly-spaced positions across range, removing duplicates
-            interp = PositionInterpolator(series_index.instance_count)
-            positions, _ = interp.interpolate_unique(
-                tile_height,
-                start=args.start,
-                end=args.end,
-            )
-
-            if not positions:
-                logger.error(
-                    "Requested range did not produce any slices. Verify --start/--end."
-                )
-                return 1
-
-            effective_height = len(positions)
-            if args.verbose and effective_height < tile_height:
                 logger.info(
-                    "Range %.1f%%-%.1f%% provides %d unique slices; "
-                    "shrinking grid height to %d rows"
-                    % (args.start * 100, args.end * 100, effective_height, effective_height)
+                    "Sampling %d slices between %.1f%% and %.1f%%",
+                    args.samples,
+                    start * 100,
+                    end * 100,
                 )
+            try:
+                positions = _generate_positions(series_index, args.samples, start, end)
+            except ValueError as e:
+                logger.error(str(e))
+                return 1
 
-            # Retrieve instances at positions
-            if args.verbose:
-                logger.info("Retrieving DICOM instances...")
             try:
                 instances = series_index.get_instances(positions=positions, headers_only=False)
             except ValueError as e:
@@ -1137,20 +1009,31 @@ def contrast_mosaic_command(args, logger):
                 return 1
 
             if not instances:
-                logger.error(f"No DICOM instances found in range {args.start:.1%}-{args.end:.1%}")
+                logger.error("No DICOM instances found in requested range")
                 return 1
-
-            tile_height = len(instances)
-
-            if args.verbose:
-                logger.info(f"Retrieved {len(instances)} instances")
 
         from .image_utils import InstanceRenderer, MosaicRenderer
 
-        if args.verbose:
-            logger.info(f"Grid layout: {num_contrasts}x{tile_height} (contrasts x instances)")
-            logger.info("Generating contrast grid...")
+        tile_rows = len(instances)
+        tile_columns = num_contrasts
+        if tile_rows == 0:
+            logger.error("No slices available to render")
+            return 1
 
+        tile_pixel_width = args.width
+        if tile_pixel_width:
+            tile_pixel_width = max(1, tile_pixel_width // tile_columns)
+        else:
+            tile_pixel_width = max(1, 768 // tile_columns)
+
+        if args.verbose:
+            logger.info("Grid layout: %d x %d (contrasts x slices)", tile_columns, tile_rows)
+            if args.width:
+                logger.info(f"Target canvas width: {args.width}px")
+            if args.height:
+                logger.info(f"Target canvas height: {args.height}px")
+
+        renderer_cache: dict[str, InstanceRenderer] = {}
         image_grid = []
         for inst_idx, instance in enumerate(instances):
             for contrast_idx, contrast_settings in enumerate(parsed_contrasts):
@@ -1161,10 +1044,14 @@ def contrast_mosaic_command(args, logger):
                         f"contrast {contrast_idx+1}/{num_contrasts}: {contrast_str}"
                     )
 
-                renderer = InstanceRenderer(
-                    image_width=args.image_width,
-                    window_settings=contrast_settings,
-                )
+                key = args.contrast[contrast_idx]
+                renderer = renderer_cache.get(key)
+                if renderer is None:
+                    renderer = InstanceRenderer(
+                        image_width=tile_pixel_width,
+                        window_settings=contrast_settings,
+                    )
+                    renderer_cache[key] = renderer
                 img = renderer.render_instance(instance.dataset)
                 if img is None:
                     logger.error(
@@ -1174,9 +1061,9 @@ def contrast_mosaic_command(args, logger):
                 image_grid.append(img)
 
         generator = MosaicRenderer(
-            tile_width=num_contrasts,
-            tile_height=tile_height,
-            image_width=args.image_width,
+            tile_width=tile_columns,
+            tile_height=tile_rows,
+            image_width=tile_pixel_width,
         )
 
         output_image = generator.tile_images(image_grid)
@@ -1184,6 +1071,8 @@ def contrast_mosaic_command(args, logger):
         if not output_image:
             logger.error("Failed to tile images into grid")
             return 1
+
+        output_image = _resize_canvas_if_needed(output_image, args.width, args.height)
 
         # Save output
         if args.verbose:
@@ -1326,138 +1215,6 @@ def clear_index_command(args, logger):
     except Exception as e:
         logger.exception(f"Error clearing index cache: {e}")
         return 1
-
-
-def _setup_mosaic_subcommand(subparsers):
-    """
-    Setup mosaic subcommand with all its arguments.
-
-    Args:
-        subparsers: The subparsers object from ArgumentParser
-    """
-    mosaic_parser = subparsers.add_parser(
-        "mosaic",
-        help="Generate a tiled mosaic grid from a DICOM series"
-    )
-    add_common_arguments(mosaic_parser)
-    add_range_arguments(mosaic_parser)
-    add_cache_arguments(mosaic_parser)
-    mosaic_parser.add_argument(
-        "-t", "--tile-width",
-        type=int,
-        default=DEFAULT_MOSAIC_TILE_SIZE,
-        help=f"Number of images per row in mosaic. Default: {DEFAULT_MOSAIC_TILE_SIZE}"
-    )
-    mosaic_parser.add_argument(
-        "--tile-height",
-        type=int,
-        help="Number of images per column in mosaic. Default: same as --tile-width"
-    )
-    mosaic_parser.set_defaults(func=mosaic_command)
-
-
-def _setup_image_subcommand(subparsers):
-    """
-    Setup image subcommand with all its arguments.
-
-    Args:
-        subparsers: The subparsers object from ArgumentParser
-    """
-    image_parser = subparsers.add_parser(
-        "image",
-        help="Extract a single image from a DICOM series at a specific position"
-    )
-
-    add_common_arguments(image_parser, image_width_default=None)
-
-    # Cache arguments
-    add_cache_arguments(image_parser)
-
-    # Position arguments
-    image_parser.add_argument(
-        "-p", "--position",
-        type=float,
-        required=True,
-        help="Extract image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior"
-    )
-    image_parser.add_argument(
-        "--slice-offset",
-        type=int,
-        default=0,
-        help="Offset from --position by number of slices (e.g., 1 for next slice, -1 for previous). Default: 0"
-    )
-
-    image_parser.set_defaults(func=image_command)
-
-
-def _setup_contrast_mosaic_subcommand(subparsers):
-    """
-    Setup contrast-mosaic subcommand with all its arguments.
-
-    Grid layout: contrasts on x-axis (columns), instances on y-axis (rows).
-    Use either --position for single instance or --start/--end for range of instances.
-
-    Args:
-        subparsers: The subparsers object from ArgumentParser
-    """
-    contrast_parser = subparsers.add_parser(
-        "contrast-mosaic",
-        help="Create a grid of a DICOM instance(s) under multiple contrast settings (contrasts on x-axis, instances on y-axis)"
-    )
-
-    add_common_arguments(contrast_parser, include_contrast=False)
-
-    # Instance selection: position mode (single instance)
-    contrast_parser.add_argument(
-        "-p", "--position",
-        type=float,
-        help="Extract single image at normalized z-position (0.0-1.0). 0.0=superior, 1.0=inferior. "
-             "Cannot be used with --start/--end."
-    )
-    contrast_parser.add_argument(
-        "--slice-offset",
-        type=int,
-        default=0,
-        help="Offset from --position by number of slices (only valid with --position). Default: 0"
-    )
-
-    # Instance selection: range mode (multiple instances)
-    contrast_parser.add_argument(
-        "-s", "--start",
-        type=float,
-        help="Start of normalized z-position range (0.0-1.0) for selecting multiple instances. "
-             "Cannot be used with --position."
-    )
-    contrast_parser.add_argument(
-        "-e", "--end",
-        type=float,
-        help="End of normalized z-position range (0.0-1.0) for selecting multiple instances. "
-             "Cannot be used with --position."
-    )
-
-    # Vertical tiling (instances)
-    contrast_parser.add_argument(
-        "-t", "--tile-height",
-        type=int,
-        default=2,
-        help="Number of instances per column (y-axis). Only used with --start/--end. Default: 2"
-    )
-
-    # Contrast settings (repeatable, always horizontal)
-    contrast_parser.add_argument(
-        "-c", "--contrast",
-        action="append",
-        help="Contrast settings (repeatable, x-axis): CT preset (ct-lung, ct-bone, ct-brain, ct-abdomen, ct-liver, ct-mediastinum, ct-soft-tissue), "
-             "MR preset (mr-t1, mr-t2, mr-proton), legacy alias (lung, bone, brain, etc.), "
-             "shortcut (soft, media, t1, t2, proton), 'auto', 'embedded', or custom window/level. "
-             "Formats: '1500/500' (slash, medical standard) or '1500,500' (comma). "
-             "Negative values supported (e.g., '1500/-500'). At least one -c/--contrast is required."
-    )
-
-    # Index caching arguments
-    add_cache_arguments(contrast_parser)
-
-    contrast_parser.set_defaults(func=contrast_mosaic_command)
 
 
 def build_index_command(args, logger):
@@ -1728,43 +1485,3 @@ def _setup_clear_index_subcommand(subparsers):
     )
 
     clear_parser.set_defaults(func=clear_index_command)
-
-
-def _setup_parser():
-    """
-    Setup and configure the main argument parser with all subcommands.
-
-    Returns:
-        Configured ArgumentParser with mosaic, image, and contrast-mosaic subcommands
-    """
-    parser = argparse.ArgumentParser(
-        description="Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization.",
-        prog="idc-series-preview"
-    )
-
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-    subparsers.required = True
-
-    # Setup subcommands
-    _setup_mosaic_subcommand(subparsers)
-    _setup_image_subcommand(subparsers)
-    _setup_contrast_mosaic_subcommand(subparsers)
-    _setup_build_index_subcommand(subparsers)
-    _setup_get_index_subcommand(subparsers)
-    _setup_clear_index_subcommand(subparsers)
-
-    return parser
-
-
-def main():
-    parser = _setup_parser()
-    args = parser.parse_args()
-
-    setup_logging(args.verbose)
-    logger = logging.getLogger(__name__)
-
-    return args.func(args, logger)
-
-
-if __name__ == "__main__":
-    sys.exit(main())

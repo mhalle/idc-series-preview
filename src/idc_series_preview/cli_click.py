@@ -10,8 +10,8 @@ import click
 
 from .constants import (
     DEFAULT_IMAGE_QUALITY,
-    DEFAULT_IMAGE_WIDTH,
-    DEFAULT_MOSAIC_TILE_SIZE,
+    DEFAULT_SAMPLE_COUNT,
+    DEFAULT_VIDEO_FRAME_COUNT,
 )
 from .cli_core import (
     setup_logging,
@@ -42,10 +42,9 @@ def _invoke_command(func: CommandCallable, **kwargs: Any) -> None:
 def common_options(
     *,
     include_contrast: bool = True,
-    image_width_default: Optional[int] = DEFAULT_IMAGE_WIDTH,
     include_quality: bool = True,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Decorator adding shared root/image/quality/verbose options."""
+    """Decorator adding shared root/quality/verbose options."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         func = click.option(
@@ -69,14 +68,6 @@ def common_options(
                 "--contrast",
                 help="Contrast preset ('ct-lung', 'bone', 'auto', 'embedded', or custom WW/WL such as '1500/500')",
             )(func)
-        func = click.option(
-            "-w",
-            "--image-width",
-            type=int,
-            default=image_width_default,
-            show_default=image_width_default is not None,
-            help="Width of each output image in pixels. Height scales proportionally.",
-        )(func)
         func = click.option(
             "--root",
             default="s3://idc-open-data",
@@ -139,32 +130,48 @@ def cli() -> None:
     help="End of normalized z-position range (0.0-1.0).",
 )
 @click.option(
-    "-t",
-    "--tile-width",
+    "-n",
+    "--samples",
     type=int,
-    default=DEFAULT_MOSAIC_TILE_SIZE,
+    default=DEFAULT_SAMPLE_COUNT,
     show_default=True,
-    help="Number of images per row in the mosaic.",
+    help="Number of slices to sample across the range.",
 )
 @click.option(
-    "--tile-height",
+    "--columns",
     type=int,
-    default=None,
-    help="Number of images per column in the mosaic. Defaults to tile width.",
+    help="Force a specific number of mosaic columns.",
+)
+@click.option(
+    "--rows",
+    type=int,
+    help="Force a specific number of mosaic rows.",
+)
+@click.option(
+    "--width",
+    type=int,
+    help="Total mosaic width in pixels.",
+)
+@click.option(
+    "--height",
+    type=int,
+    help="Optional mosaic height in pixels.",
 )
 def mosaic_click(
     *,
     seriesuid: str,
     output: str,
     root: str,
-    image_width: Optional[int],
     contrast: Optional[str],
     quality: int,
     verbose: bool,
     start: float,
     end: float,
-    tile_width: int,
-    tile_height: Optional[int],
+    samples: int,
+    columns: Optional[int],
+    rows: Optional[int],
+    width: Optional[int],
+    height: Optional[int],
     cache_dir: Optional[str],
     no_cache: bool,
 ) -> None:
@@ -175,14 +182,16 @@ def mosaic_click(
         seriesuid=seriesuid,
         output=output,
         root=root,
-        image_width=image_width,
         contrast=contrast,
         quality=quality,
         verbose=verbose,
         start=start,
         end=end,
-        tile_width=tile_width,
-        tile_height=tile_height,
+        samples=samples,
+        columns=columns,
+        rows=rows,
+        width=width,
+        height=height,
         cache_dir=cache_dir,
         no_cache=no_cache,
     )
@@ -191,8 +200,13 @@ def mosaic_click(
 @cli.command("image")
 @click.argument("seriesuid")
 @click.argument("output")
-@common_options(image_width_default=None)
+@common_options()
 @cache_options
+@click.option(
+    "--width",
+    type=int,
+    help="Width of the output image in pixels.",
+)
 @click.option(
     "-p",
     "--position",
@@ -212,7 +226,7 @@ def image_click(
     seriesuid: str,
     output: str,
     root: str,
-    image_width: Optional[int],
+    width: Optional[int],
     contrast: Optional[str],
     quality: int,
     verbose: bool,
@@ -228,7 +242,7 @@ def image_click(
         seriesuid=seriesuid,
         output=output,
         root=root,
-        image_width=image_width,
+        width=width,
         contrast=contrast,
         quality=quality,
         verbose=verbose,
@@ -327,7 +341,7 @@ def header_click(
 @cli.command("video")
 @click.argument("seriesuid")
 @click.argument("output")
-@common_options(include_quality=False, image_width_default=None)
+@common_options(include_quality=False)
 @cache_options
 @click.option(
     "-s",
@@ -353,9 +367,17 @@ def header_click(
     help="Frames per second for the output video.",
 )
 @click.option(
-    "--frames",
+    "-n",
+    "--samples",
     type=int,
-    help="Sample exactly this many slices evenly spaced within the range.",
+    default=DEFAULT_VIDEO_FRAME_COUNT,
+    show_default=True,
+    help="Number of frames to sample evenly across the range.",
+)
+@click.option(
+    "--width",
+    type=int,
+    help="Frame width in pixels.",
 )
 @click.option(
     "-q",
@@ -370,7 +392,7 @@ def video_click(
     seriesuid: str,
     output: str,
     root: str,
-    image_width: Optional[int],
+    width: Optional[int],
     contrast: Optional[str],
     verbose: bool,
     cache_dir: Optional[str],
@@ -378,7 +400,7 @@ def video_click(
     start: float,
     end: float,
     fps: float,
-    frames: Optional[int],
+    samples: int,
     quality: int,
 ) -> None:
     """Render the slices of a DICOM series into an MP4 video."""
@@ -388,7 +410,7 @@ def video_click(
         seriesuid=seriesuid,
         output=output,
         root=root,
-        image_width=image_width,
+        width=width,
         contrast=contrast,
         verbose=verbose,
         cache_dir=cache_dir,
@@ -396,7 +418,7 @@ def video_click(
         start=start,
         end=end,
         fps=fps,
-        frames=frames,
+        samples=samples,
         quality=quality,
     )
 
@@ -406,13 +428,6 @@ def video_click(
 @click.argument("output")
 @common_options(include_contrast=False)
 @cache_options
-@click.option(
-    "-c",
-    "--contrast",
-    multiple=True,
-    required=True,
-    help="Contrast settings (repeatable) such as 'ct-lung', 'auto', or '1500/500'.",
-)
 @click.option(
     "-p",
     "--position",
@@ -439,19 +454,35 @@ def video_click(
     help="End of normalized z-position range (range mode only).",
 )
 @click.option(
-    "-t",
-    "--tile-height",
+    "-n",
+    "--samples",
     type=int,
-    default=2,
+    default=1,
     show_default=True,
-    help="Number of instances per column (y-axis) when sampling a range.",
+    help="Number of slices to sample when using --start/--end.",
+)
+@click.option(
+    "-c",
+    "--contrast",
+    multiple=True,
+    required=True,
+    help="Contrast settings (repeatable) such as 'ct-lung', 'auto', or '1500/500'.",
+)
+@click.option(
+    "--width",
+    type=int,
+    help="Total grid width in pixels.",
+)
+@click.option(
+    "--height",
+    type=int,
+    help="Optional grid height in pixels.",
 )
 def contrast_mosaic_click(
     *,
     seriesuid: str,
     output: str,
     root: str,
-    image_width: Optional[int],
     quality: int,
     verbose: bool,
     cache_dir: Optional[str],
@@ -461,7 +492,9 @@ def contrast_mosaic_click(
     slice_offset: int,
     start: Optional[float],
     end: Optional[float],
-    tile_height: int,
+    samples: int,
+    width: Optional[int],
+    height: Optional[int],
 ) -> None:
     """Create a grid of a DICOM instance under multiple contrast settings."""
     _validate_cache_flags(cache_dir, no_cache)
@@ -470,7 +503,6 @@ def contrast_mosaic_click(
         seriesuid=seriesuid,
         output=output,
         root=root,
-        image_width=image_width,
         quality=quality,
         verbose=verbose,
         cache_dir=cache_dir,
@@ -480,7 +512,9 @@ def contrast_mosaic_click(
         slice_offset=slice_offset,
         start=start,
         end=end,
-        tile_height=tile_height,
+        samples=samples,
+        width=width,
+        height=height,
     )
 
 

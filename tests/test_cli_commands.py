@@ -1,4 +1,3 @@
-import argparse
 import json
 import logging
 from pathlib import Path
@@ -12,8 +11,6 @@ from idc_series_preview.cli_core import (
     build_index_command,
     contrast_mosaic_command,
     get_index_command,
-    _setup_contrast_mosaic_subcommand,
-    _setup_mosaic_subcommand,
     mosaic_command,
     image_command,
     header_command,
@@ -316,14 +313,16 @@ def test_mosaic_command_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
         seriesuid="series",
         output=str(tmp_path / "mosaic.webp"),
         root="s3://bucket",
-        image_width=128,
+        width=512,
+        height=None,
         contrast="auto",
         quality=75,
         verbose=False,
         start=0.0,
         end=1.0,
-        tile_width=4,
-        tile_height=4,
+        samples=9,
+        columns=None,
+        rows=None,
         cache_dir=None,
         no_cache=False,
     )
@@ -355,11 +354,11 @@ def test_video_command_streams_slices_to_ffmpeg(monkeypatch, tmp_path):
                 }
             )
 
-        def get_instances(self, slice_numbers, max_workers=None, headers_only=False):
-            requested.append(list(slice_numbers))
+        def get_instances(self, positions=None, max_workers=None, headers_only=False):
+            requested.append(list(positions))
             return [
-                SimpleNamespace(instance_uid=f"uid{idx}", dataset=SimpleNamespace(value=idx))
-                for idx in slice_numbers
+                SimpleNamespace(instance_uid=f"uid{i}", dataset=SimpleNamespace(value=i))
+                for i in range(len(positions))
             ]
 
     class DummyRenderer:
@@ -414,7 +413,7 @@ def test_video_command_streams_slices_to_ffmpeg(monkeypatch, tmp_path):
         seriesuid="series",
         output=str(tmp_path / "video.mp4"),
         root="s3://bucket",
-        image_width=64,
+        width=64,
         contrast=None,
         verbose=False,
         cache_dir=None,
@@ -422,14 +421,14 @@ def test_video_command_streams_slices_to_ffmpeg(monkeypatch, tmp_path):
         start=0.0,
         end=1.0,
         fps=24.0,
-        frames=None,
+        samples=3,
         quality=DEFAULT_IMAGE_QUALITY,
     )
     logger = logging.getLogger("test")
 
     rc = video_command(args, logger)
     assert rc == 0
-    assert requested == [[0, 1, 2]]
+    assert requested == [[0.0, 0.5, 1.0]]
     assert ffmpeg_calls
     call = ffmpeg_calls[0]
     assert call["width"] == 2
@@ -460,7 +459,7 @@ def test_video_command_rejects_invalid_fps(monkeypatch, tmp_path):
         seriesuid="series",
         output=str(tmp_path / "video.mp4"),
         root="s3://bucket",
-        image_width=64,
+        width=64,
         contrast=None,
         verbose=False,
         cache_dir=None,
@@ -468,7 +467,7 @@ def test_video_command_rejects_invalid_fps(monkeypatch, tmp_path):
         start=0.0,
         end=1.0,
         fps=0.0,
-        frames=None,
+        samples=3,
         quality=DEFAULT_IMAGE_QUALITY,
     )
     logger = logging.getLogger("test")
@@ -482,7 +481,7 @@ def test_video_command_rejects_invalid_quality(tmp_path):
         seriesuid="series",
         output=str(tmp_path / "video.mp4"),
         root="s3://bucket",
-        image_width=64,
+        width=64,
         contrast=None,
         verbose=False,
         cache_dir=None,
@@ -490,7 +489,7 @@ def test_video_command_rejects_invalid_quality(tmp_path):
         start=0.0,
         end=1.0,
         fps=24.0,
-        frames=None,
+        samples=3,
         quality=120,
     )
     logger = logging.getLogger("test")
@@ -499,18 +498,18 @@ def test_video_command_rejects_invalid_quality(tmp_path):
     assert rc == 1
 
 
-def test_video_command_supports_frames_option(monkeypatch, tmp_path):
+def test_video_command_respects_samples_option(monkeypatch, tmp_path):
     calls = []
 
     class DummySeriesIndex:
         def __init__(self, *args, **kwargs):
             self.instance_count = 5
 
-        def get_instances(self, **kwargs):
-            calls.append(kwargs)
+        def get_instances(self, positions=None, **kwargs):
+            calls.append(list(positions))
             return [
                 SimpleNamespace(instance_uid=f"uid{i}", dataset=SimpleNamespace(value=i))
-                for i in range(len(kwargs.get("positions") or kwargs.get("slice_numbers")))
+                for i in range(len(positions))
             ]
 
     class DummyRenderer:
@@ -547,7 +546,7 @@ def test_video_command_supports_frames_option(monkeypatch, tmp_path):
         seriesuid="series",
         output=str(tmp_path / "video.mp4"),
         root="s3://bucket",
-        image_width=64,
+        width=64,
         contrast=None,
         verbose=False,
         cache_dir=None,
@@ -555,24 +554,23 @@ def test_video_command_supports_frames_option(monkeypatch, tmp_path):
         start=0.0,
         end=1.0,
         fps=24.0,
-        frames=2,
-        quality=80,
+        samples=2,
+        quality=DEFAULT_IMAGE_QUALITY,
     )
     logger = logging.getLogger("test")
 
     rc = video_command(args, logger)
     assert rc == 0
     assert calls
-    assert "positions" in calls[0]
-    assert calls[0]["positions"] == [0.0, 1.0]
+    assert calls[0] == [0.0, 1.0]
 
 
-def test_video_command_rejects_invalid_frame_count(tmp_path):
+def test_video_command_rejects_invalid_sample_count(tmp_path):
     args = SimpleNamespace(
         seriesuid="series",
         output=str(tmp_path / "video.mp4"),
         root="s3://bucket",
-        image_width=64,
+        width=64,
         contrast=None,
         verbose=False,
         cache_dir=None,
@@ -580,7 +578,7 @@ def test_video_command_rejects_invalid_frame_count(tmp_path):
         start=0.0,
         end=1.0,
         fps=24.0,
-        frames=0,
+        samples=0,
         quality=DEFAULT_IMAGE_QUALITY,
     )
     logger = logging.getLogger("test")
@@ -638,7 +636,8 @@ def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
         seriesuid="series",
         output=str(tmp_path / "grid.webp"),
         root="s3://bucket",
-        image_width=128,
+        width=512,
+        height=None,
         contrast=["lung", "bone"],
         quality=75,
         verbose=False,
@@ -646,7 +645,7 @@ def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
         slice_offset=0,
         start=0.0,
         end=1.0,
-        tile_height=5,
+        samples=5,
         cache_dir=None,
         no_cache=False,
     )
@@ -662,35 +661,3 @@ def test_contrast_mosaic_shrinks_rows_for_unique_slices(monkeypatch, tmp_path):
     renderer = RecordingGridRenderer.created[-1]
     assert renderer.tile_height == 2
     assert len(renderer.images) == 4
-
-
-def _build_single_command_parser(setup_fn):
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="command")
-    subparsers.required = True
-    setup_fn(subparsers)
-    return parser
-
-
-def test_mosaic_short_flag_parses_tile_width():
-    parser = _build_single_command_parser(_setup_mosaic_subcommand)
-    args = parser.parse_args(["mosaic", "series", "out.webp", "-t", "7"])
-    assert args.tile_width == 7
-
-
-def test_contrast_mosaic_short_flag_parses_tile_height():
-    parser = _build_single_command_parser(_setup_contrast_mosaic_subcommand)
-    args = parser.parse_args([
-        "contrast-mosaic",
-        "series",
-        "out.webp",
-        "-c",
-        "lung",
-        "--start",
-        "0.0",
-        "--end",
-        "0.5",
-        "-t",
-        "3",
-    ])
-    assert args.tile_height == 3

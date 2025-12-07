@@ -24,26 +24,26 @@ uvx git+https://www.github.com/mhalle/idc-series-preview --help
 ## Quick Examples
 
 ```bash
-# Default 6x6 mosaic from IDC
-uv run idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 out.webp
+# Sample 36 slices into a near-square mosaic
+uv run idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 out.webp --samples 36 --width 1600
 
-# Middle 60% only, lung preset
+# Middle 60% only, lung preset, force 4 columns
 uv run idc-series-preview mosaic 38902e14-b11f-4548-910e-771ee757dc82 lung.webp \
-  --start 0.2 --end 0.8 -c lung
+  --samples 12 --columns 4 --start 0.2 --end 0.8 -c lung
 
 # Single slice, high quality JPEG
 uv run idc-series-preview image 38902e14-b11f-4548-910e-771ee757dc82 slice.jpg \
-  --position 0.5 --image-width 512 -q 85
+  --position 0.5 --width 512 -q 85
 
 # Contrast comparison grid
 uv run idc-series-preview contrast-mosaic 38902e14-b11f-4548-910e-771ee757dc82 cmp.webp \
-  --position 0.5 -c lung -c bone -c mediastinum
+  --samples 3 -c lung -c bone -c mediastinum
 
 # Export the header for the middle slice
 uv run idc-series-preview header 38902e14-b11f-4548-910e-771ee757dc82 -p 0.5 --output header.json
 
 # Encode every slice into a 24fps MP4, sampling 120 frames
-uv run idc-series-preview video 38902e14-b11f-4548-910e-771ee757dc82 series.mp4 --fps 24 --frames 120
+uv run idc-series-preview video 38902e14-b11f-4548-910e-771ee757dc82 series.mp4 --fps 24 --samples 120
 
 # Warm the cache for multiple series
 uv run idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
@@ -54,10 +54,10 @@ uv run idc-series-preview build-index 38902e14-b11f-4548-910e-771ee757dc82 \
 
 | Command | Purpose |
 | --- | --- |
-| `mosaic` | Evenly sample a series and tile the images into a WebP/JPEG grid. Automatically shrinks rows when the requested range has fewer slices than slots. |
+| `mosaic` | Evenly sample a series (`--samples`) and tile the images into a WebP/JPEG grid. Automatically shrinks rows when the requested range has fewer slices than slots. |
 | `image` | Grab a single slice by normalized position with optional slice-offset. |
 | `header` | Dump selected cached header metadata for a specific slice as JSON (stdout or file, optionally filtered via `--tag`, use `--quiet` to suppress missing-tag warnings). |
-| `video` | Render each slice (or N evenly spaced frames) into an MP4 using ffmpeg (libx264) with configurable FPS. |
+| `video` | Render sampled slices (`--samples`) into an MP4 using ffmpeg (libx264) with configurable FPS. |
 | `contrast-mosaic` | Compare one or more slices across multiple window/level presets. |
 | `build-index` | Create parquet indices (`indices/{uid}_index.parquet`) for faster later access. |
 | `get-index` | Ensure an index exists and either print its path or export it as parquet/JSON/JSONL. |
@@ -69,9 +69,10 @@ All commands share:
 - `-v/--verbose`
 
 Imaging commands also expose:
-- `--image-width` (video keeps native DICOM width unless you specify this) and `-c/--contrast`
-- `-q/--quality` for raster image outputs (mosaic/image/contrast-mosaic)
-- `--fps` (default 24) and `--frames` for the `video` encoder to control playback rate and sampling density
+- `--width` / `--height` to size the final artifact (per-frame for `image`/`video`, full canvas for mosaics)
+- `-n/--samples` to control how many slices are rendered when sampling a range
+- `-q/--quality` for raster outputs (mapped to CRF for `video`)
+- `-c/--contrast` where applicable, plus `--fps` for the `video` encoder
 
 ### Contrast Presets
 
