@@ -232,7 +232,12 @@ class DICOMRetriever:
         return self.get_instance_data(series_uid, identifier)
 
     def _get_instance_headers(
-        self, series_uid: str, instance_uid: str, max_bytes: int = 10000
+        self,
+        series_uid: str,
+        instance_uid: str,
+        max_bytes: int = 10000,
+        *,
+        return_raw: bool = False,
     ) -> Tuple[Optional[pydicom.Dataset], int]:
         """
         Retrieve DICOM headers via progressive range requests.
@@ -243,6 +248,11 @@ class DICOMRetriever:
         - Third chunk: +10KB if needed (~22.5KB total)
         - Fourth chunk: +50KB if needed (~72.5KB total)
         - Fifth chunk: +50KB if needed (~122.5KB total)
+        - Sixth chunk: +500KB if needed (~622.5KB total)
+        - Seventh chunk: +10000KB if needed (~10622.5KB total)
+        - Eighth chunk: +20000KB if needed (~30622.5KB total)
+        - Ninth chunk: +20000KB if needed (~50622.5KB total)
+        - Tenth chunk: +20000KB if needed (~70622.5KB total)
         - Fallback: Full file if progressive chunks exhausted
 
         Args:
@@ -251,13 +261,25 @@ class DICOMRetriever:
             max_bytes: Ignored (kept for backward compatibility)
 
         Returns:
-            Tuple of (pydicom.Dataset or None, total_file_size)
+            Tuple of (pydicom.Dataset or None, total_file_size).
+            If return_raw=True, returns ((dataset or None, raw_bytes), total_file_size).
         """
         try:
             path = self._get_instance_path(series_uid, instance_uid)
 
-            # Progressive chunk sizes: start small, then two larger 50KB blocks
-            chunk_sizes = [5120, 7680, 10240, 51200, 51200]
+            # Progressive chunk sizes: start small, then larger 50KB, 500KB, 10MB, and multiple 20MB blocks
+            chunk_sizes = [
+                5120,
+                7680,
+                10240,
+                51200,
+                51200,
+                512000,
+                10240000,
+                20000000,
+                20000000,
+                20000000,
+            ]
             data = b''
 
             # Try progressive range requests
@@ -277,6 +299,8 @@ class DICOMRetriever:
                         size = meta_data.get('size') if isinstance(meta_data, dict) else meta_data.size
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(f"Headers parsed successfully at {len(data)} bytes for {path}")
+                        if return_raw:
+                            return (ds, bytes(data)), size
                         return ds, size
                     except NotImplementedError as e:
                         # Unsupported compression, skip this file
@@ -303,6 +327,8 @@ class DICOMRetriever:
                 result = self.store.get(path)
                 full_data = bytes(result.bytes())
                 ds = pydicom.dcmread(BytesIO(full_data), stop_before_pixels=True, force=True)
+                if return_raw:
+                    return (ds, full_data), len(full_data)
                 return ds, len(full_data)
             except NotImplementedError as e:
                 if logger.isEnabledFor(logging.DEBUG):
@@ -848,6 +874,7 @@ class DICOMRetriever:
         urls: List[str],
         headers_only: bool = False,
         max_workers: Optional[int] = None,
+        return_raw: bool = False,
     ) -> List[Optional[pydicom.Dataset]]:
         """
         Fetch multiple DICOM instances in parallel from a list of URLs/paths.
@@ -860,6 +887,7 @@ class DICOMRetriever:
             headers_only: If True, fetch only DICOM headers via progressive range requests.
                          If False, fetch complete instances.
             max_workers: Number of parallel fetch threads
+            return_raw: When headers_only=True, return (dataset, raw_bytes) tuples
 
         Returns:
             List of pydicom.Dataset objects (or None for failed URLs).
@@ -882,7 +910,9 @@ class DICOMRetriever:
                     if len(parts) >= 2:
                         series_uid = parts[0]
                         instance_part = parts[1]
-                        ds, _ = self._get_instance_headers(series_uid, instance_part)
+                        ds, _ = self._get_instance_headers(
+                            series_uid, instance_part, return_raw=return_raw
+                        )
                     else:
                         return (original_url, None)
                 else:

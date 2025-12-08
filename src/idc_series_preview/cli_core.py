@@ -51,6 +51,13 @@ def _normalize_json_value(value):
     if value is None:
         return None
     if isinstance(value, (str, int, float, bool)):
+        # If the value looks like serialized JSON (from cached sequence fields),
+        # try to decode it back to a structure to avoid double-quoting.
+        if isinstance(value, str) and value and value[0] in ("{", "["):
+            try:
+                return json.loads(value)
+            except Exception:
+                pass
         return value
     if isinstance(value, (datetime, date)):
         return value.isoformat()
