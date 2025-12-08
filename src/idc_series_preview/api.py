@@ -370,9 +370,12 @@ class Instance:
         total_width = sum(img.width for img in images)
         max_height = max(img.height for img in images)
 
-        grid = Image.new("L", (total_width, max_height))
+        base_mode = images[0].mode
+        grid = Image.new(base_mode, (total_width, max_height))
         x_offset = 0
         for img in images:
+            if img.mode != base_mode:
+                img = img.convert(base_mode)
             grid.paste(img, (x_offset, 0))
             x_offset += img.width
 
@@ -667,8 +670,6 @@ class SeriesIndex:
                         f"Removed {len(positions) - len(unique_positions)} duplicate positions"
                     )
                 positions = unique_positions
-            else:
-                unique_positions = positions
 
             # Validate all positions
             for pos in positions:
@@ -713,17 +714,14 @@ class SeriesIndex:
                 for (url, instance_uid), dataset in zip(urls_needing_fetch, datasets):
                     fetched_map[(url, instance_uid)] = dataset
 
-            # Build result mapping
-            results = {}
+            # Build ordered results without collapsing duplicates
+            instances = []
             for (url, pos, instance_uid, dataset) in urls_with_pos:
                 resolved = dataset
                 if resolved is None or headers_only:
                     resolved = fetched_map.get((url, instance_uid))
                 if resolved is not None:
-                    results[pos] = Instance(instance_uid, resolved, self)
-
-            # Return in position order, filtering out failed fetches
-            instances = [results[pos] for pos in unique_positions if pos in results]
+                    instances.append(Instance(instance_uid, resolved, self))
 
             if not instances:
                 raise ValueError(f"Failed to retrieve any instances from {len(positions)} positions")
@@ -747,8 +745,6 @@ class SeriesIndex:
                         f"Removed {len(slice_numbers) - len(unique_slices)} duplicate slice numbers"
                     )
                 slice_numbers = unique_slices
-            else:
-                unique_slices = slice_numbers
 
             # Validate all slice numbers
             for slice_num in slice_numbers:
@@ -778,14 +774,11 @@ class SeriesIndex:
             urls = [url for url, _, _ in urls_with_slice]
             datasets = retriever.get_instances(urls, headers_only=headers_only, max_workers=max_workers)
 
-            # Build result mapping
-            results = {}
+            # Build ordered results without collapsing duplicates
+            instances = []
             for (url, slice_num, instance_uid), dataset in zip(urls_with_slice, datasets):
                 if dataset is not None:
-                    results[slice_num] = Instance(instance_uid, dataset, self)
-
-            # Return in slice order, filtering out failed fetches
-            instances = [results[s] for s in unique_slices if s in results]
+                    instances.append(Instance(instance_uid, dataset, self))
 
             if not instances:
                 raise ValueError(f"Failed to retrieve any instances from {len(slice_numbers)} slices")
@@ -896,13 +889,7 @@ class SeriesIndex:
             rendering fails.
         """
         instance = self.get_instance(position=position, slice_number=slice_number)
-        from .image_utils import InstanceRenderer
-
-        renderer = InstanceRenderer(image_width=image_width, window_settings=contrast)
-        img = renderer.render_instance(instance.dataset)
-        if img is None:
-            raise ValueError("Failed to render image for selected instance")
-        return img
+        return instance.get_image(contrast=contrast, image_width=image_width)
 
     def get_images(
         self,
@@ -963,18 +950,10 @@ class SeriesIndex:
             headers_only=False,  # Need full data for rendering
         )
 
-        from .image_utils import InstanceRenderer
-
-        renderer = InstanceRenderer(image_width=image_width, window_settings=contrast)
-        images = []
-        for instance in instances:
-            img = renderer.render_instance(instance.dataset)
-            if img is None:
-                raise ValueError(
-                    f"Failed to render image for {instance.instance_uid}"
-                )
-            images.append(img)
-        return images
+        return [
+            instance.get_image(contrast=contrast, image_width=image_width)
+            for instance in instances
+        ]
 
     def __repr__(self) -> str:
         """String representation."""
