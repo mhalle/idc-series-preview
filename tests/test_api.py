@@ -246,7 +246,7 @@ def _make_fake_series_index(retriever, uid_url_pairs):
         {
             "_index": list(range(len(uid_url_pairs))),
             "SOPInstanceUID": [uid for uid, _ in uid_url_pairs],
-            "_data_url": [url for _, url in uid_url_pairs],
+            "_instance_url": [url for _, url in uid_url_pairs],
         }
     )
     index._series_uid = "series"

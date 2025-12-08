@@ -9,3 +9,7 @@ DEFAULT_VIDEO_FRAME_COUNT = 120
 
 # Performance defaults
 DEFAULT_MAX_WORKERS = 9
+
+# IDC index parquet base URL
+IDC_INDEX_BASE_URL = "https://github.com/ImagingDataCommons/idc-index-data/releases/latest/download/"
+IDC_INDEX_URL = f"{IDC_INDEX_BASE_URL}idc_index.parquet"

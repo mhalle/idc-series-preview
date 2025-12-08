@@ -475,8 +475,10 @@ def _generate_parquet_table(
     # path resolution works (and multiple projects/directories don't collide in a
     # global cache).
     data_urls = [f"{normalized_root}/{uid}.dcm" for uid in instance_uids]
-    column_data["_data_url"] = data_urls
-    column_types["_data_url"] = pl.Utf8
+    column_data["_instance_url"] = data_urls
+    column_types["_instance_url"] = pl.Utf8
+    column_data["_series_url"] = [normalized_root + "/"] * len(instance_uids)
+    column_types["_series_url"] = pl.Utf8
 
     # Extract PrimaryPosition and PrimaryAxis from sorting metadata
     primary_positions = []

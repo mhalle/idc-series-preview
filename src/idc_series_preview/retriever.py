@@ -192,7 +192,7 @@ class DICOMRetriever:
             return f"{series_uid}/{instance_uid}.dcm"
 
     def _to_store_path(self, url: str) -> str:
-        """Convert absolute _data_url to store-relative path."""
+        """Convert absolute _instance_url to store-relative path."""
         if not url:
             return url
 
@@ -222,7 +222,7 @@ class DICOMRetriever:
             return None
 
     def _fetch_dataset_by_identifier(self, identifier: str, series_uid: str) -> Optional[pydicom.Dataset]:
-        """Fetch dataset using either a _data_url or raw instance UID."""
+        """Fetch dataset using either a _instance_url or raw instance UID."""
         if not identifier:
             return None
 
@@ -431,9 +431,9 @@ class DICOMRetriever:
                         f"({start_pos:.2f} to {end_pos:.2f}) selected {len(df)} instances"
                     )
 
-            # Return tuples of (UID, DataURL)
-            rows = df.select(["SOPInstanceUID", "_data_url"]).to_dicts()
-            instances = [(row["SOPInstanceUID"], row["_data_url"]) for row in rows]
+            # Return tuples of (UID, Instance URL)
+            rows = df.select(["SOPInstanceUID", "_instance_url"]).to_dicts()
+            instances = [(row["SOPInstanceUID"], row["_instance_url"]) for row in rows]
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Using cached index for {len(instances)} instances")
             return instances
@@ -686,7 +686,7 @@ class DICOMRetriever:
                 selection_method = f"{selection_method} + offset {slice_offset} → index {target_idx}"
 
             selected_instance = sorted_instances[selected_idx]
-            data_url = selected_instance.get("_data_url")
+            data_url = selected_instance.get("_instance_url")
             instance_uid = selected_instance.get("SOPInstanceUID")
 
             if logger.isEnabledFor(logging.DEBUG):

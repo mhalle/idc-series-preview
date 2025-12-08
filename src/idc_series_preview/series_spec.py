@@ -91,7 +91,8 @@ def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logg
     """
     Parse, normalize, and resolve series specification.
 
-    Handles full paths and series UIDs.
+    Handles full paths and series UIDs. When given just a series UID, attempts to
+    resolve the IDC storage URL via the published parquet index.
 
     Args:
         series_spec: Series specification (UID or full path)
@@ -144,5 +145,21 @@ def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logg
         else:
             series_uid = matches[0]
             logger.info(f"Found matching series: {series_uid}")
+
+    # If the user provided only a UID (not a full path), try resolving the IDC S3 URL.
+    if root_path == root:
+        try:
+            from .idc_index_client import get_series_url
+
+            series_url = get_series_url(series_uid)
+            if series_url:
+                cleaned = series_url.rstrip("/")
+                if cleaned.endswith(series_uid):
+                    resolved_root = cleaned.rsplit("/", 1)[0]
+                    if resolved_root != root_path:
+                        logger.debug(f"Resolved series root via IDC index: {resolved_root}")
+                    root_path = resolved_root
+        except Exception as e:
+            logger.debug(f"IDC index lookup failed for {series_uid}: {e}")
 
     return root_path, series_uid

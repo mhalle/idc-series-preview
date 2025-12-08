@@ -689,7 +689,7 @@ class SeriesIndex:
                 if matching.height == 0:
                     logger.warning(f"Instance {instance_uid} not found in index")
                     continue
-                data_url = matching[0, "_data_url"]
+                data_url = matching[0, "_instance_url"]
 
                 urls_with_pos.append((data_url, pos, instance_uid, dataset))
 
@@ -770,7 +770,7 @@ class SeriesIndex:
                         f"(series has {self.instance_count} instances)"
                     ) from exc
 
-                data_url = row["_data_url"]
+                data_url = row["_instance_url"]
                 instance_uid = row["SOPInstanceUID"]
                 urls_with_slice.append((data_url, slice_num, instance_uid))
 
