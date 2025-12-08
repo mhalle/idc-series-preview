@@ -540,21 +540,21 @@ class SeriesIndex:
         str
             One of 'X' (sagittal), 'Y' (coronal), 'Z' (axial), or 'I' (instance number)
         """
-        if "PrimaryAxis" not in self._index_df.columns:
+        if "_primary_axis" not in self._index_df.columns:
             return "I"  # Default to instance number
 
-        axes = self._index_df["PrimaryAxis"].unique().to_list()
+        axes = self._index_df["_primary_axis"].unique().to_list()
         if len(axes) == 1:
             return axes[0]
 
         # If mixed (shouldn't happen), return most common
         axis_counts = (
-            self._index_df.select("PrimaryAxis")
-            .group_by("PrimaryAxis")
+            self._index_df.select("_primary_axis")
+            .group_by("_primary_axis")
             .count()
             .sort("count", descending=True)
         )
-        return axis_counts["PrimaryAxis"][0]
+        return axis_counts["_primary_axis"][0]
 
     @property
     def index_dataframe(self) -> pl.DataFrame:
@@ -571,11 +571,11 @@ class SeriesIndex:
         tuple[float, float]
             (min_position, max_position)
         """
-        if "PrimaryPosition" not in self._index_df.columns:
+        if "_primary_position" not in self._index_df.columns:
             return (0.0, float(self.instance_count - 1))
 
-        min_pos = self._index_df["PrimaryPosition"].min()
-        max_pos = self._index_df["PrimaryPosition"].max()
+        min_pos = self._index_df["_primary_position"].min()
+        max_pos = self._index_df["_primary_position"].max()
 
         return (float(min_pos), float(max_pos))
 
@@ -689,7 +689,7 @@ class SeriesIndex:
                 if matching.height == 0:
                     logger.warning(f"Instance {instance_uid} not found in index")
                     continue
-                data_url = matching[0, "DataURL"]
+                data_url = matching[0, "_data_url"]
 
                 urls_with_pos.append((data_url, pos, instance_uid, dataset))
 
@@ -759,7 +759,7 @@ class SeriesIndex:
                     )
 
             # Get metadata for all slices from index and build URLs
-            sorted_df = self._index_df.sort("Index")
+            sorted_df = self._index_df.sort("_index")
             urls_with_slice = []  # List of (url, slice_num, instance_uid) tuples
             for slice_num in slice_numbers:
                 try:
@@ -770,7 +770,7 @@ class SeriesIndex:
                         f"(series has {self.instance_count} instances)"
                     ) from exc
 
-                data_url = row["DataURL"]
+                data_url = row["_data_url"]
                 instance_uid = row["SOPInstanceUID"]
                 urls_with_slice.append((data_url, slice_num, instance_uid))
 

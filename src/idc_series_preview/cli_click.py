@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from argparse import Namespace
 from typing import Any, Callable, Optional
+from types import SimpleNamespace
 
 import click
 
@@ -21,20 +21,20 @@ from .cli_core import (
     video_command,
     contrast_mosaic_command,
     build_index_command,
-    get_index_command,
+    headers_command,
     clear_index_command,
 )
 
 
-CommandCallable = Callable[[Namespace, logging.Logger], int]
+CommandCallable = Callable[[object, logging.Logger], int]
 
 
 def _invoke_command(func: CommandCallable, **kwargs: Any) -> None:
-    """Invoke existing argparse command and map errors to Click exceptions."""
-    args = Namespace(**kwargs)
-    setup_logging(getattr(args, "verbose", False))
+    """Invoke existing command helpers and map errors to Click exceptions."""
+    args = kwargs
+    setup_logging(bool(args.get("verbose", False)))
     logger = logging.getLogger(__name__)
-    rc = func(args, logger)
+    rc = func(SimpleNamespace(**args), logger)
     if rc != 0:
         raise click.ClickException(f"{func.__name__} failed with exit code {rc}")
 
@@ -596,7 +596,7 @@ def build_index_click(
     )
 
 
-@cli.command("get-index")
+@cli.command("headers")
 @click.argument("series")
 @click.argument("output", required=False)
 @click.option(
@@ -626,7 +626,12 @@ def build_index_click(
     is_flag=True,
     help="Enable detailed logging",
 )
-def get_index_click(
+@click.option(
+    "--split-constant",
+    is_flag=True,
+    help="Split output into a JSON object with 'constant' (shared tags) and 'per_instance' (varying tags).",
+)
+def headers_click(
     *,
     series: str,
     output: Optional[str],
@@ -635,10 +640,11 @@ def get_index_click(
     verbose: bool,
     rebuild: bool,
     format: Optional[str],
+    split_constant: bool,
 ) -> None:
-    """Get or create a DICOM series index and return its path."""
+    """Get or create a DICOM series index and emit headers (stdout by default)."""
     _invoke_command(
-        get_index_command,
+        headers_command,
         series=series,
         output=output,
         cache_dir=cache_dir,
@@ -646,6 +652,7 @@ def get_index_click(
         rebuild=rebuild,
         format=format,
         verbose=verbose,
+        split_constant=split_constant,
     )
 
 

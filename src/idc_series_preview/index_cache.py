@@ -149,7 +149,7 @@ def dicom_header_to_dict(dataset: pydicom.Dataset) -> dict[str, Any]:
 
 
 # Required columns that must exist in a valid index
-REQUIRED_COLUMNS = {"Index", "PrimaryPosition", "PrimaryAxis", "SOPInstanceUID"}
+REQUIRED_COLUMNS = {"_index", "_primary_position", "_primary_axis", "SOPInstanceUID"}
 
 
 def get_cache_directory(cli_arg: Optional[str] = None) -> Path:
@@ -282,9 +282,9 @@ def _validate_index(df: pl.DataFrame, expected_series_uid: str) -> bool:
         )
 
     # Validate Index column values
-    if not df["Index"].dtype == pl.UInt32:
+    if not df["_index"].dtype == pl.UInt32:
         logger.warning(
-            f"Index column has type {df['Index'].dtype}, expected UInt32"
+            f"_index column has type {df['_index'].dtype}, expected UInt32"
         )
 
     return True
@@ -387,8 +387,8 @@ def _generate_parquet_table(
     column_types = {}
 
     # Always include Index (sort order), DataURL, and primary position/axis metadata
-    column_data["Index"] = list(range(len(instance_uids)))
-    column_types["Index"] = pl.UInt32
+    column_data["_index"] = list(range(len(instance_uids)))
+    column_types["_index"] = pl.UInt32
 
     normalized_root = storage_root.rstrip('/') or storage_root
     # TODO(#local-relative-cache): for local storage roots, consider writing the
@@ -396,8 +396,8 @@ def _generate_parquet_table(
     # path resolution works (and multiple projects/directories don't collide in a
     # global cache).
     data_urls = [f"{normalized_root}/{uid}.dcm" for uid in instance_uids]
-    column_data["DataURL"] = data_urls
-    column_types["DataURL"] = pl.Utf8
+    column_data["_data_url"] = data_urls
+    column_types["_data_url"] = pl.Utf8
 
     # Extract PrimaryPosition and PrimaryAxis from sorting metadata
     primary_positions = []
@@ -427,10 +427,10 @@ def _generate_parquet_table(
         else:  # Instance number
             primary_positions.append(float(sorted_slice.get("InstanceNumber", 0)))
 
-    column_data["PrimaryPosition"] = primary_positions
-    column_types["PrimaryPosition"] = pl.Float32
-    column_data["PrimaryAxis"] = primary_axes
-    column_types["PrimaryAxis"] = pl.Utf8
+    column_data["_primary_position"] = primary_positions
+    column_types["_primary_position"] = pl.Float32
+    column_data["_primary_axis"] = primary_axes
+    column_types["_primary_axis"] = pl.Utf8
 
     # Normalized slice index (0.0-1.0) mirrors SliceParameterization behavior
     normalized_indices = []
@@ -439,8 +439,8 @@ def _generate_parquet_table(
         normalized_indices = [0.0]
     elif count > 1:
         normalized_indices = [i / (count - 1) for i in range(count)]
-    column_data["IndexNormalized"] = normalized_indices
-    column_types["IndexNormalized"] = pl.Float32
+    column_data["_index_normalized"] = normalized_indices
+    column_types["_index_normalized"] = pl.Float32
 
     # Helper function to get Polars type from VR code
     def get_polars_type(vr: str) -> pl.DataType:
@@ -620,14 +620,9 @@ def load_or_generate_index(
         log.debug(f"Loading cached index from: {index_path}")
         try:
             df = _load_index(index_path)
-            if "DataURL" not in df.columns:
-                log.info(
-                    "Cached index is missing DataURL column; regenerating to latest schema"
-                )
-            else:
-                _validate_index(df, series_uid)
-                log.info(f"Index loaded: {len(df)} instances")
-                return df
+            _validate_index(df, series_uid)
+            log.info(f"Index loaded: {len(df)} instances")
+            return df
         except (FileNotFoundError, ValueError) as e:
             log.error(f"Failed to load index: {e}")
 

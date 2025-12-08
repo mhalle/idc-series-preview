@@ -20,7 +20,7 @@ idc-series-preview COMMAND [OPTIONS] [ARGUMENTS]
 - **video**: Render canonical slices to an MP4 using ffmpeg (libx264)
 - **contrast-mosaic**: Create comparison grids with multiple contrast settings
 - **build-index**: Pre-build cached indices for faster access
-- **get-index**: Retrieve or create an index and return its path
+- **headers**: Retrieve or create an index and emit headers (JSON/JSONL to stdout or file)
 - **clear-index**: Delete cached index files
 
 The tool uses efficient retrieval strategies (headers first, then pixel data for selected instances) and supports advanced features like window/level presets, auto-contrast detection, and flexible series specification formats.
@@ -595,14 +595,14 @@ DICOM elements with identical values across all instances are excluded (derivabl
 
 ---
 
-### get-index
+### headers
 
-Retrieve or create a DICOM series index and return its path.
+Retrieve or create a DICOM series index and emit headers (JSON by default).
 
 **SYNOPSIS**
 
 ```
-idc-series-preview get-index SERIES [OPTIONS]
+idc-series-preview headers SERIES [OPTIONS]
 ```
 
 **ARGUMENTS**
@@ -611,10 +611,10 @@ idc-series-preview get-index SERIES [OPTIONS]
 : DICOM Series UID or path (same formats as other commands)
 
 `OUTPUT`
-: Optional destination for the exported index. Supports:
-  - Format prefixes: `csv:/tmp/index.csv`, `jsonl:relative/path.jsonl`
-  - File extensions: `.parquet`, `.csv`, `.json`, `.jsonl` / `.ndjson`
-  - If omitted, the command prints the cached Parquet path
+: Optional destination for headers. Supports:
+  - Format prefixes: `jsonl:/tmp/out.jsonl`, `json:/tmp/out.json`
+  - File extensions: `.parquet`, `.json`, `.jsonl` / `.ndjson`
+  - If omitted, writes JSON to stdout
 
 **OPTIONS**
 
@@ -629,45 +629,36 @@ idc-series-preview get-index SERIES [OPTIONS]
 `--rebuild`
 : Force regeneration of the cached index before exporting/printing.
 
-`--format {csv,json,jsonl,parquet}`
-: Force export format when `OUTPUT` is provided. Overrides prefixes/extensions.
+`--format {json,jsonl,parquet}`
+: Force output format. Defaults to `json` when writing to stdout. Parquet requires an OUTPUT path.
+
+`--split-constant`
+: Emit a JSON object with `constant` (shared tags) and `per_instance` (per-row varying tags). JSON output only.
 
 **EXAMPLES**
 
 ```bash
-# Get index path (create if doesn't exist)
-idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82
+# JSON to stdout (default)
+idc-series-preview headers 38902e14-b11f-4548-910e-771ee757dc82
 
-# Get index path in custom cache directory
-idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
-  --cache-dir /tmp/my-indices
+# JSONL to file via prefix
+idc-series-preview headers 38902e14-b11f-4548-910e-771ee757dc82 \
+  jsonl:/tmp/series.jsonl
 
-# Export index as CSV using prefix syntax
-idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
-  csv:/tmp/series.csv
+# Parquet copy to path
+idc-series-preview headers 38902e14-b11f-4548-910e-771ee757dc82 \
+  /tmp/series.parquet --format parquet
 
-# Export index as JSONL with explicit --format
-idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 \
-  /tmp/series.ndjson --format jsonl
-
-# Verbose output showing what's happening
-idc-series-preview get-index 38902e14-b11f-4548-910e-771ee757dc82 -v
+# Split constant vs per-instance fields (JSON only)
+idc-series-preview headers 38902e14-b11f-4548-910e-771ee757dc82 \
+  --split-constant
 ```
 
 **BEHAVIOR**
 
-1. Checks if index already exists in cache
-2. If found: returns/exports immediately
-3. If not found: builds index (same as `build-index` command) and then exports
-4. Supports exporting as Parquet (copy), CSV, JSON (array), or JSONL/NDJSON (line-delimited)
-5. When no destination is given, prints the cached Parquet path for scripting
-
-**OUTPUT**
-
-Prints the full path to the cached or exported index, e.g.:
-```
-/Users/username/.cache/dicom-indices/indices/38902e14-b11f-4548-910e-771ee757dc82_index.parquet
-```
+1. Ensures an index exists in cache (builds it if missing or `--rebuild`)
+2. Emits headers as JSON/JSONL to stdout by default, or copies Parquet to the specified path
+3. `--split-constant` restructures JSON into `{ "constant": {...}, "per_instance": [...] }`
 
 ---
 
@@ -1016,8 +1007,8 @@ idc-series-preview mosaic SERIES2 output2.webp --cache-dir /cache
 ```bash
 #!/bin/bash
 # Get index and pass to external tool
-INDEX=$(idc-series-preview get-index $SERIES --cache-dir /cache)
-python analyze_dicom.py --index "$INDEX"
+idc-series-preview headers $SERIES --cache-dir /cache > /tmp/headers.json
+python analyze_dicom.py --headers /tmp/headers.json
 ```
 
 ---
@@ -1066,7 +1057,7 @@ Index files are stored in Apache Parquet format:
 **Version 0.5.0** (current)
 - New `SeriesIndex` API-first architecture for programmatic use
 - CLI refactored to use unified API layer
-- Five commands: mosaic, image, contrast-mosaic, build-index, get-index
+- Commands: mosaic, image, contrast-mosaic, build-index, headers
 - Added MR contrast presets: T1, T2, Proton Density
 - Improved defaults: 256px images, 3x3 mosaics, quality=60
 - Short command aliases: -p, -s, -e, -w, -q

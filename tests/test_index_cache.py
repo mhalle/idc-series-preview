@@ -49,7 +49,7 @@ def test_generate_parquet_table_preserves_list_tags():
     assert df["WindowWidth"].to_list()[0] == [400.0, 800.0]
 
     assert df["ImagePositionPatient"].to_list()[0] == [0.0, 0.0, 0.0]
-    assert df["IndexNormalized"].to_list() == [0.0]
+    assert df["_index_normalized"].to_list() == [0.0]
 
 
 def test_generate_parquet_table_normalized_index_multiple_slices():
@@ -58,6 +58,6 @@ def test_generate_parquet_table_normalized_index_multiple_slices():
 
     df = _generate_parquet_table({"1": ds1, "2": ds2}, "series", "s3://bucket")
 
-    values = sorted(df["IndexNormalized"].to_list())
+    values = sorted(df["_index_normalized"].to_list())
     assert values == [0.0, 1.0]
     assert set(df["SOPInstanceUID"].to_list()) == {"1", "2"}

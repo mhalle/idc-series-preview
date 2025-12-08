@@ -302,26 +302,38 @@ def _infer_format_from_suffix(path: Path):
     return None
 
 
-def _resolve_get_index_output(args, logger):
-    """Determine requested format/path for get-index output."""
+def _resolve_headers_output(args, logger):
+    """Determine requested format/path for headers output."""
     output_value = getattr(args, "output", None)
     format_arg = getattr(args, "format", None)
+    split_constant_varying = getattr(args, "split_constant", False)
 
     if not output_value:
-        if format_arg:
-            logger.error("--format requires an output destination")
+        target_format = format_arg or "json"
+        if target_format not in SUPPORTED_INDEX_FORMATS:
+            logger.error(f"Unsupported output format: {target_format}")
             return None
-        return ("print", None)
+        if target_format == "parquet":
+            logger.error("Parquet output requires a destination file; choose json/jsonl or provide OUTPUT")
+            return None
+        if split_constant_varying and target_format != "json":
+            logger.error("--constant-varying is only supported with JSON output")
+            return None
+        return ("stdout", target_format, None)
 
     prefix_format, path_str = _split_format_prefix(output_value)
     output_path = Path(path_str)
-    target_format = format_arg or prefix_format or _infer_format_from_suffix(output_path) or "parquet"
+    target_format = format_arg or prefix_format or _infer_format_from_suffix(output_path) or "json"
 
     if target_format not in SUPPORTED_INDEX_FORMATS:
         logger.error(f"Unsupported output format: {target_format}")
         return None
 
-    return (target_format, output_path)
+    if split_constant_varying and target_format != "json":
+        logger.error("--constant-varying is only supported with JSON output")
+        return None
+
+    return ("file", target_format, output_path)
 
 
 def parse_contrast_arg(contrast_str: str) -> dict | str | None:
@@ -719,11 +731,11 @@ def header_command(args, logger):
         return 1
 
     index_df = series_index.index_dataframe
-    if "IndexNormalized" not in index_df.columns:
+    if "_index_normalized" not in index_df.columns:
         logger.error("Index does not contain normalized positions")
         return 1
 
-    normalized = index_df["IndexNormalized"].to_list()
+    normalized = index_df["_index_normalized"].to_list()
     if not normalized:
         logger.error("Series index is empty")
         return 1
@@ -1124,8 +1136,32 @@ def contrast_mosaic_command(args, logger):
         return 1
 
 
-def get_index_command(args, logger):
-    """Get or create a DICOM series index and return its path."""
+def _split_constant_varying(rows):
+    """Split header rows into (constant dict, list of per-row varying dicts)."""
+    if not rows:
+        return {}, []
+
+    keys = rows[0].keys()
+    constant = {}
+    varying_keys = []
+
+    for key in keys:
+        values = [row.get(key) for row in rows]
+        if all(v == values[0] for v in values):
+            constant[key] = values[0]
+        else:
+            varying_keys.append(key)
+
+    varying_rows = []
+    for row in rows:
+        v_row = {k: row[k] for k in varying_keys if k in row}
+        varying_rows.append(v_row)
+
+    return constant, varying_rows
+
+
+def headers_command(args, logger):
+    """Get or create a DICOM series index and emit headers."""
     try:
         from .api import SeriesIndex
 
@@ -1152,24 +1188,35 @@ def get_index_command(args, logger):
 
         index_path = cache_dir / "indices" / f"{series_index.series_uid}_index.parquet"
 
-        output_request = _resolve_get_index_output(args, logger)
+        output_request = _resolve_headers_output(args, logger)
         if output_request is None:
             return 1
 
-        if output_request[0] == "print":
-            if args.verbose:
-                logger.info(f"Index ready: {index_path}")
-            print(index_path)
+        destination, export_format, export_path = output_request
+
+        df = series_index.index_dataframe
+
+        # Emit to stdout
+        if destination == "stdout":
+            rows = df.to_dicts()
+            normalized = [{k: _normalize_json_value(v) for k, v in row.items()} for row in rows]
+            if export_format == "json":
+                if getattr(args, "split_constant", False):
+                    constant, varying = _split_constant_varying(normalized)
+                    print(json.dumps({"constant": constant, "per_instance": varying}, indent=HEADER_DEFAULT_INDENT))
+                else:
+                    print(json.dumps(normalized, indent=HEADER_DEFAULT_INDENT))
+            else:  # jsonl
+                for row in normalized:
+                    print(json.dumps(row))
             return 0
 
-        export_format, export_path = output_request
         export_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             if export_format == "parquet":
                 shutil.copy2(index_path, export_path)
             else:
-                df = series_index.index_dataframe
                 if export_format == "json":
                     df.write_json(str(export_path))
                 elif export_format == "jsonl":
@@ -1180,7 +1227,6 @@ def get_index_command(args, logger):
 
         if args.verbose:
             logger.info(f"Index exported to {export_path} ({export_format})")
-        print(export_path)
         return 0
 
     except Exception as e:
@@ -1407,16 +1453,16 @@ def _setup_build_index_subcommand(subparsers):
     index_parser.set_defaults(func=build_index_command)
 
 
-def _setup_get_index_subcommand(subparsers):
+def _setup_headers_subcommand(subparsers):
     """
-    Setup get-index subcommand to retrieve or build an index.
+    Setup headers subcommand to retrieve or build an index and emit headers.
 
     Args:
         subparsers: The subparsers object from ArgumentParser
     """
     get_index_parser = subparsers.add_parser(
-        "get-index",
-        help="Get or create a DICOM series index and return its path"
+        "headers",
+        help="Get or create a DICOM series index and emit headers (stdout by default)"
     )
 
     # Positional argument: series UID/path
@@ -1432,8 +1478,8 @@ def _setup_get_index_subcommand(subparsers):
         "output",
         nargs="?",
         metavar="OUTPUT",
-        help="Optional destination for the index. Supports format prefixes such as 'jsonl:/tmp/out.jsonl' "
-             "or paths whose extension implies the format (parquet, json, jsonl)."
+        help="Optional destination for the headers. Supports format prefixes such as 'jsonl:/tmp/out.jsonl' "
+             "or paths whose extension implies the format (parquet, json, jsonl). Defaults to JSON on stdout."
     )
 
     # Storage arguments
@@ -1462,8 +1508,13 @@ def _setup_get_index_subcommand(subparsers):
     get_index_parser.add_argument(
         "--format",
         choices=sorted(SUPPORTED_INDEX_FORMATS),
-        help="Explicit index export format when --output is provided. "
-             "Overrides prefix/extension detection."
+        help="Explicit output format. Defaults to json when writing to stdout. "
+             "Parquet requires an OUTPUT file path. Overrides prefix/extension detection."
+    )
+    get_index_parser.add_argument(
+        "--split-constant",
+        action="store_true",
+        help="Split output into a JSON object with 'constant' (shared tags) and 'per_instance' (varying tags).",
     )
 
     # Utility arguments
@@ -1473,7 +1524,7 @@ def _setup_get_index_subcommand(subparsers):
         help="Enable detailed logging"
     )
 
-    get_index_parser.set_defaults(func=get_index_command)
+    get_index_parser.set_defaults(func=headers_command)
 
 
 def _setup_clear_index_subcommand(subparsers):

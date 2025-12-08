@@ -10,7 +10,7 @@ from PIL import Image
 from idc_series_preview.cli_core import (
     build_index_command,
     contrast_mosaic_command,
-    get_index_command,
+    headers_command,
     mosaic_command,
     image_command,
     header_command,
@@ -27,12 +27,12 @@ class StubSeriesIndex:
         self.instance_count = 1
         self.index_dataframe = pl.DataFrame(
             {
-                "Index": [0],
-                "IndexNormalized": [0.0],
+                "_index": [0],
+                "_index_normalized": [0.0],
                 "SeriesUID": [self.series_uid],
-                "PrimaryAxis": ["Z"],
-                "PrimaryPosition": [0.0],
-                "DataURL": [f"{root.rstrip('/')}/{self.series_uid}/instance.dcm"],
+                "_primary_axis": ["Z"],
+                "_primary_position": [0.0],
+                "_data_url": [f"{root.rstrip('/')}/{self.series_uid}/instance.dcm"],
                 "PixelSpacing": [[0.5, 0.5]],
             }
         )
@@ -46,7 +46,7 @@ def patch_series_index(monkeypatch):
     monkeypatch.setattr("idc_series_preview.api.SeriesIndex", StubSeriesIndex)
 
 
-def test_get_index_command_jsonl_preserves_lists(tmp_path):
+def test_headers_command_jsonl_preserves_lists(tmp_path):
     cache_dir = tmp_path / "cache"
     output_path = tmp_path / "out.jsonl"
     args = SimpleNamespace(
@@ -57,10 +57,11 @@ def test_get_index_command_jsonl_preserves_lists(tmp_path):
         output=str(output_path),
         format="jsonl",
         rebuild=False,
+        constant_varying=False,
     )
     logger = logging.getLogger("test")
 
-    rc = get_index_command(args, logger)
+    rc = headers_command(args, logger)
     assert rc == 0
     assert output_path.is_file()
 
@@ -93,7 +94,7 @@ def test_header_command_writes_json(monkeypatch, tmp_path):
         def __init__(self, *args, **kwargs):
             self.index_dataframe = pl.DataFrame(
                 {
-                    "IndexNormalized": [0.0, 0.5, 1.0],
+                    "_index_normalized": [0.0, 0.5, 1.0],
                     "SeriesUID": ["a", "b", "c"],
                     "Custom": ["first", "middle", "last"],
                     "WindowWidth": [1500, 1400, 1300],
@@ -129,7 +130,7 @@ def test_header_command_respects_slice_offset(monkeypatch, capsys):
         def __init__(self, *args, **kwargs):
             self.index_dataframe = pl.DataFrame(
                 {
-                    "IndexNormalized": [0.0, 0.5, 1.0],
+                    "_index_normalized": [0.0, 0.5, 1.0],
                     "Value": [1, 2, 3],
                 }
             )
@@ -161,7 +162,7 @@ def test_header_command_filters_tags(monkeypatch, tmp_path, caplog):
         def __init__(self, *args, **kwargs):
             self.index_dataframe = pl.DataFrame(
                 {
-                    "IndexNormalized": [0.0, 0.5],
+                    "_index_normalized": [0.0, 0.5],
                     "SeriesUID": ["one", "two"],
                     "WindowWidth": [1200, 1100],
                     "WindowCenter": [600, 550],
@@ -200,7 +201,7 @@ def test_header_command_quiet_suppresses_warning(monkeypatch, tmp_path, caplog):
         def __init__(self, *args, **kwargs):
             self.index_dataframe = pl.DataFrame(
                 {
-                    "IndexNormalized": [0.0, 0.5],
+                    "_index_normalized": [0.0, 0.5],
                     "SeriesUID": ["one", "two"],
                 }
             )
@@ -234,7 +235,7 @@ def test_header_command_glob_handles_no_match_without_warning(monkeypatch, tmp_p
         def __init__(self, *args, **kwargs):
             self.index_dataframe = pl.DataFrame(
                 {
-                    "IndexNormalized": [0.0],
+                    "_index_normalized": [0.0],
                     "SeriesUID": ["one"],
                 }
             )
@@ -350,8 +351,8 @@ def test_video_command_streams_slices_to_ffmpeg(monkeypatch, tmp_path):
             self.instance_count = 3
             self.index_dataframe = pl.DataFrame(
                 {
-                    "Index": [0, 1, 2],
-                    "IndexNormalized": [0.0, 0.5, 1.0],
+                    "_index": [0, 1, 2],
+                    "_index_normalized": [0.0, 0.5, 1.0],
                 }
             )
 

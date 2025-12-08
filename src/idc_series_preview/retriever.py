@@ -192,7 +192,7 @@ class DICOMRetriever:
             return f"{series_uid}/{instance_uid}.dcm"
 
     def _to_store_path(self, url: str) -> str:
-        """Convert absolute DataURL to store-relative path."""
+        """Convert absolute _data_url to store-relative path."""
         if not url:
             return url
 
@@ -222,7 +222,7 @@ class DICOMRetriever:
             return None
 
     def _fetch_dataset_by_identifier(self, identifier: str, series_uid: str) -> Optional[pydicom.Dataset]:
-        """Fetch dataset using either a DataURL or raw instance UID."""
+        """Fetch dataset using either a _data_url or raw instance UID."""
         if not identifier:
             return None
 
@@ -378,13 +378,13 @@ class DICOMRetriever:
 
         try:
             # Filter to matching instances
-            df = self.index_df.sort("Index")
+            df = self.index_df.sort("_index")
 
             # Apply range filtering if specified
             if start > 0.0 or end < 1.0:
                 # Get min/max PrimaryPosition
-                min_pos = df["PrimaryPosition"].min()
-                max_pos = df["PrimaryPosition"].max()
+                min_pos = df["_primary_position"].min()
+                max_pos = df["_primary_position"].max()
                 pos_range = max_pos - min_pos
 
                 # Map normalized range to actual positions
@@ -393,8 +393,8 @@ class DICOMRetriever:
 
                 # Filter instances within range
                 df = df.filter(
-                    (pl.col("PrimaryPosition") >= start_pos)
-                    & (pl.col("PrimaryPosition") <= end_pos)
+                    (pl.col("_primary_position") >= start_pos)
+                    & (pl.col("_primary_position") <= end_pos)
                 )
 
                 if logger.isEnabledFor(logging.DEBUG):
@@ -404,8 +404,8 @@ class DICOMRetriever:
                     )
 
             # Return tuples of (UID, DataURL)
-            rows = df.select(["SOPInstanceUID", "DataURL"]).to_dicts()
-            instances = [(row["SOPInstanceUID"], row["DataURL"]) for row in rows]
+            rows = df.select(["SOPInstanceUID", "_data_url"]).to_dicts()
+            instances = [(row["SOPInstanceUID"], row["_data_url"]) for row in rows]
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Using cached index for {len(instances)} instances")
             return instances
@@ -612,14 +612,14 @@ class DICOMRetriever:
         # Fast path: Use cached index if available
         if self.index_df is not None:
             # Get all instances in sorted order from cache
-            sorted_instances = self.index_df.sort("Index").to_dicts()
+            sorted_instances = self.index_df.sort("_index").to_dicts()
 
             if not sorted_instances:
                 logger.error(f"No instances in cache for series {series_uid}")
                 return None
 
             # Extract primary positions for spatial/temporal analysis
-            primary_positions = [inst["PrimaryPosition"] for inst in sorted_instances]
+            primary_positions = [inst["_primary_position"] for inst in sorted_instances]
             has_z_variation = len(set(primary_positions)) > 1
 
             selected_idx = None
@@ -658,11 +658,11 @@ class DICOMRetriever:
                 selection_method = f"{selection_method} + offset {slice_offset} → index {target_idx}"
 
             selected_instance = sorted_instances[selected_idx]
-            data_url = selected_instance.get("DataURL")
+            data_url = selected_instance.get("_data_url")
             instance_uid = selected_instance.get("SOPInstanceUID")
 
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Position {position:.1%} selected by {selection_method} (PrimaryPosition={selected_instance['PrimaryPosition']:.2f}, PrimaryAxis={selected_instance['PrimaryAxis']})")
+                logger.debug(f"Position {position:.1%} selected by {selection_method} (PrimaryPosition={selected_instance['_primary_position']:.2f}, PrimaryAxis={selected_instance['_primary_axis']})")
 
             # Fetch only the pixel data for this instance
             full_ds = self._get_dataset_by_url(data_url)
