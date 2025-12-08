@@ -239,8 +239,10 @@ class DICOMRetriever:
 
         Uses adaptive strategy to minimize bandwidth:
         - First chunk: 5KB (covers ~95% of simple files)
-        - Second chunk: +10KB if needed (15KB total)
-        - Third chunk: +10KB if needed (25KB total)
+        - Second chunk: +7.5KB if needed (~12.5KB total)
+        - Third chunk: +10KB if needed (~22.5KB total)
+        - Fourth chunk: +50KB if needed (~72.5KB total)
+        - Fifth chunk: +50KB if needed (~122.5KB total)
         - Fallback: Full file if progressive chunks exhausted
 
         Args:
@@ -254,8 +256,8 @@ class DICOMRetriever:
         try:
             path = self._get_instance_path(series_uid, instance_uid)
 
-            # Progressive chunk sizes: 5KB, +7.5KB, +10KB (optimized for bandwidth)
-            chunk_sizes = [5120, 7680, 10240]
+            # Progressive chunk sizes: start small, then two larger 50KB blocks
+            chunk_sizes = [5120, 7680, 10240, 51200, 51200]
             data = b''
 
             # Try progressive range requests
