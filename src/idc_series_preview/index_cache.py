@@ -475,8 +475,10 @@ def _generate_parquet_table(
     # path resolution works (and multiple projects/directories don't collide in a
     # global cache).
     data_urls = [f"{normalized_root}/{uid}.dcm" for uid in instance_uids]
-    column_data["_data_url"] = data_urls
-    column_types["_data_url"] = pl.Utf8
+    column_data["_instance_url"] = data_urls
+    column_types["_instance_url"] = pl.Utf8
+    column_data["_series_url"] = [normalized_root + "/"] * len(instance_uids)
+    column_types["_series_url"] = pl.Utf8
 
     # Extract PrimaryPosition and PrimaryAxis from sorting metadata
     primary_positions = []
@@ -670,7 +672,7 @@ def _generate_parquet_table(
 
 def load_or_generate_index(
     series_uid: str,
-    root_path: str,
+    series_url: str,
     index_dir: Optional[str] = None,
     logger_instance: Optional[logging.Logger] = None,
     save_to_cache: bool = True,
@@ -681,7 +683,7 @@ def load_or_generate_index(
 
     Args:
         series_uid: Normalized series UID
-        root_path: Root storage path
+        series_url: Fully-resolved series storage URL (trailing slash)
         index_dir: Optional cache directory (None to use defaults)
         logger_instance: Logger instance (uses module logger if None)
         save_to_cache: If True, save generated index to disk cache.
@@ -692,6 +694,7 @@ def load_or_generate_index(
         Polars DataFrame with index, or None on error
     """
     log = logger_instance or logger
+    series_url = series_url.rstrip("/") + "/"
 
     # Resolve cache directory
     cache_dir = get_cache_directory(index_dir)
@@ -726,8 +729,8 @@ def load_or_generate_index(
 
     try:
         # Create retriever and fetch instance UIDs
-        retriever = DICOMRetriever(root_path)
-        instance_uids = retriever.list_instances(series_uid)
+        retriever = DICOMRetriever(series_url, series_prefix="")
+        instance_uids = retriever.list_instances()
         if not instance_uids:
             log.error(f"No instances found in series {series_uid}")
             return None
@@ -736,7 +739,7 @@ def load_or_generate_index(
 
         # Fetch headers in parallel using progressive range requests
         log.debug("Fetching DICOM headers...")
-        urls = [f"{series_uid}/{uid}" for uid in instance_uids]
+        urls = [retriever._get_instance_path(None, uid) for uid in instance_uids]  # type: ignore[attr-defined]
         datasets_list = retriever.get_instances(urls, headers_only=True, return_raw=True)
 
         # Build dict mapping uid to dataset
@@ -762,8 +765,12 @@ def load_or_generate_index(
 
         # Generate parquet table from datasets
         log.debug("Generating index parquet table...")
-        storage_root = f"{root_path}/{series_uid}/"
-        df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root, raw_headers_by_uid)
+        df = _generate_parquet_table(
+            datasets_by_uid,
+            series_uid,
+            series_url,
+            raw_headers_by_uid,
+        )
 
         # Save to cache only if enabled
         if save_to_cache:

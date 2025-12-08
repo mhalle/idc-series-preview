@@ -32,7 +32,7 @@ class StubSeriesIndex:
                 "SeriesUID": [self.series_uid],
                 "_primary_axis": ["Z"],
                 "_primary_position": [0.0],
-                "_data_url": [f"{root.rstrip('/')}/{self.series_uid}/instance.dcm"],
+                "_instance_url": [f"{root.rstrip('/')}/{self.series_uid}/instance.dcm"],
                 "PixelSpacing": [[0.5, 0.5]],
             }
         )

@@ -90,22 +90,31 @@ class DICOMRetriever:
 
     _handlers_configured = False
 
-    def __init__(self, root_path: str, index_df: Optional[pl.DataFrame] = None):
+    def __init__(
+        self,
+        root_path: str,
+        index_df: Optional[pl.DataFrame] = None,
+        *,
+        series_prefix: Optional[str] = None,
+    ):
         """
         Initialize the retriever.
 
         Args:
-            root_path: Root path for DICOM files (S3, HTTP, or local path)
+            root_path: Root path or series URL for DICOM files (S3, HTTP, or local path)
             index_df: Optional Polars DataFrame with cached index data for fast sorting
+            series_prefix: Optional prefix to prepend when listing/fetching instances.
+                Leave None when root_path already points to the series directory.
         """
         # Configure pixel data handlers once at first initialization
         if not DICOMRetriever._handlers_configured:
             _configure_pixel_data_handlers()
             DICOMRetriever._handlers_configured = True
 
-        self.root_path = root_path
-        self.store = self._init_store(root_path)
+        self.root_path = root_path.rstrip("/")
+        self.store = self._init_store(self.root_path)
         self.index_df = index_df
+        self.series_prefix = series_prefix
 
     @staticmethod
     def _init_store(root_path: str):
@@ -183,16 +192,32 @@ class DICOMRetriever:
 
         return matches
 
-    def _get_instance_path(self, series_uid: str, instance_uid: str) -> str:
-        """Get the full path to a DICOM instance."""
-        # Handle both raw instance UIDs (add .dcm) and filenames from index (already have .dcm)
-        if instance_uid.endswith(".dcm"):
-            return f"{series_uid}/{instance_uid}"
-        else:
-            return f"{series_uid}/{instance_uid}.dcm"
+    def _normalize_series_prefix(self, series_uid: Optional[str]) -> str:
+        """Return a store prefix for a series ('' when root already scoped)."""
+        if series_uid:
+            cleaned = series_uid.rstrip("/")
+            return f"{cleaned}/"
+        if self.series_prefix:
+            cleaned = self.series_prefix.rstrip("/")
+            return f"{cleaned}/" if cleaned else ""
+        return ""
+
+    def _get_instance_path(self, series_uid: Optional[str], instance_uid: str) -> str:
+        """Get the store-relative path to a DICOM instance."""
+        prefix = self._normalize_series_prefix(series_uid)
+
+        # If the caller provided a path (possibly with subdirs), respect it.
+        if instance_uid.endswith(".dcm") and "/" in instance_uid:
+            # If already includes prefix, avoid duplicating it
+            if prefix and instance_uid.startswith(prefix):
+                return instance_uid
+            return f"{prefix}{instance_uid}"
+
+        filename = instance_uid if instance_uid.endswith(".dcm") else f"{instance_uid}.dcm"
+        return f"{prefix}{filename}"
 
     def _to_store_path(self, url: str) -> str:
-        """Convert absolute _data_url to store-relative path."""
+        """Convert absolute _instance_url to store-relative path."""
         if not url:
             return url
 
@@ -221,8 +246,8 @@ class DICOMRetriever:
                 logger.debug(f"Error retrieving {url}: {e}")
             return None
 
-    def _fetch_dataset_by_identifier(self, identifier: str, series_uid: str) -> Optional[pydicom.Dataset]:
-        """Fetch dataset using either a _data_url or raw instance UID."""
+    def _fetch_dataset_by_identifier(self, identifier: str, series_uid: Optional[str]) -> Optional[pydicom.Dataset]:
+        """Fetch dataset using either a _instance_url or raw instance UID."""
         if not identifier:
             return None
 
@@ -233,7 +258,7 @@ class DICOMRetriever:
 
     def _get_instance_headers(
         self,
-        series_uid: str,
+        series_uid: Optional[str],
         instance_uid: str,
         max_bytes: int = 10000,
         *,
@@ -256,7 +281,7 @@ class DICOMRetriever:
         - Fallback: Full file if progressive chunks exhausted
 
         Args:
-            series_uid: The DICOM series UID
+            series_uid: Optional series prefix (None when root_path is already scoped)
             instance_uid: The DICOM instance UID
             max_bytes: Ignored (kept for backward compatibility)
 
@@ -343,12 +368,13 @@ class DICOMRetriever:
             logger.error(f"Error retrieving instance headers {series_uid}/{instance_uid}: {e}")
             return None, 0
 
-    def list_instances(self, series_uid: str) -> List[str]:
+    def list_instances(self, series_uid: Optional[str] = None) -> List[str]:
         """
         List all DICOM instances in a series.
 
         Args:
-            series_uid: The DICOM series UID
+            series_uid: Optional series prefix. When omitted, root_path is assumed
+                to already point at the series directory.
 
         Returns:
             List of instance UIDs
@@ -356,7 +382,7 @@ class DICOMRetriever:
         try:
             # List objects in the series directory
             # Use prefix parameter for cleaner API
-            prefix = f"{series_uid}/" if not series_uid.endswith("/") else series_uid
+            prefix = self._normalize_series_prefix(series_uid)
             results = self.store.list(prefix=prefix)
             instances = []
 
@@ -431,9 +457,9 @@ class DICOMRetriever:
                         f"({start_pos:.2f} to {end_pos:.2f}) selected {len(df)} instances"
                     )
 
-            # Return tuples of (UID, DataURL)
-            rows = df.select(["SOPInstanceUID", "_data_url"]).to_dicts()
-            instances = [(row["SOPInstanceUID"], row["_data_url"]) for row in rows]
+            # Return tuples of (UID, Instance URL)
+            rows = df.select(["SOPInstanceUID", "_instance_url"]).to_dicts()
+            instances = [(row["SOPInstanceUID"], row["_instance_url"]) for row in rows]
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Using cached index for {len(instances)} instances")
             return instances
@@ -464,6 +490,8 @@ class DICOMRetriever:
             If fewer instances are found in the range than requested, returns all
             instances in the range (no duplicates).
         """
+        series_prefix = self.series_prefix if self.series_prefix is not None else series_uid
+
         # Try to get sorted instances from cached index
         sorted_instance_records: Optional[List[Tuple[str, str]]] = None
         if self.index_df is not None:
@@ -473,7 +501,7 @@ class DICOMRetriever:
 
         # If we couldn't use the index, fall back to normal flow
         if sorted_instance_records is None:
-            all_instances = self.list_instances(series_uid)
+            all_instances = self.list_instances(series_prefix)
 
             if not all_instances:
                 logger.error(f"No instances found for series {series_uid}")
@@ -485,7 +513,7 @@ class DICOMRetriever:
 
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = {
-                    executor.submit(self._get_instance_headers, series_uid, uid): uid
+                    executor.submit(self._get_instance_headers, series_prefix, uid): uid
                     for uid in all_instances
                 }
 
@@ -580,7 +608,7 @@ class DICOMRetriever:
                 executor.submit(
                     self._fetch_dataset_by_identifier,
                     record[1] if record[1] else record[0],
-                    series_uid,
+                    series_prefix,
                 ): record[0]
                 for record in selected_records
             }
@@ -598,7 +626,7 @@ class DICOMRetriever:
                                 if identifier_for_size and ('/' in identifier_for_size or '://' in identifier_for_size):
                                     path = self._to_store_path(identifier_for_size)
                                 else:
-                                    path = self._get_instance_path(series_uid, instance_uid)
+                                    path = self._get_instance_path(series_prefix, instance_uid)
                                 meta = self.store.head(path)
                                 file_size = meta.get('size') if isinstance(meta, dict) else meta.size
                                 pixel_bytes += file_size
@@ -637,6 +665,8 @@ class DICOMRetriever:
         Returns:
             Tuple of (instance_uid, pydicom.Dataset) or None if retrieval failed.
         """
+        series_prefix = self.series_prefix if self.series_prefix is not None else series_uid
+
         # Fast path: Use cached index if available
         if self.index_df is not None:
             # Get all instances in sorted order from cache
@@ -686,7 +716,7 @@ class DICOMRetriever:
                 selection_method = f"{selection_method} + offset {slice_offset} → index {target_idx}"
 
             selected_instance = sorted_instances[selected_idx]
-            data_url = selected_instance.get("_data_url")
+            data_url = selected_instance.get("_instance_url")
             instance_uid = selected_instance.get("SOPInstanceUID")
 
             if logger.isEnabledFor(logging.DEBUG):
@@ -702,7 +732,7 @@ class DICOMRetriever:
             return (instance_uid or data_url, full_ds)
 
         # Slow path: Fetch headers from S3 if no cache available
-        all_instances = self.list_instances(series_uid)
+        all_instances = self.list_instances(series_prefix)
 
         if not all_instances:
             logger.error(f"No instances found for series {series_uid}")
@@ -713,7 +743,7 @@ class DICOMRetriever:
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
-                executor.submit(self._get_instance_headers, series_uid, uid): uid
+                executor.submit(self._get_instance_headers, series_prefix, uid): uid
                 for uid in all_instances
             }
 
@@ -829,7 +859,7 @@ class DICOMRetriever:
             logger.debug(f"Position {position:.1%} selected by {selection_method} (z={sort_key[0]:.2f}, instance_number={sort_key[1]:.0f})")
 
         # Get full pixel data for this instance
-        full_ds = self.get_instance_data(series_uid, instance_uid)
+        full_ds = self.get_instance_data(series_prefix, instance_uid)
 
         if full_ds is None:
             logger.error(f"Could not retrieve pixel data for instance {instance_uid}")
@@ -838,13 +868,13 @@ class DICOMRetriever:
         return (instance_uid, full_ds)
 
     def get_instance_data(
-        self, series_uid: str, instance_uid: str
+        self, series_uid: Optional[str], instance_uid: str
     ) -> Optional[pydicom.Dataset]:
         """
         Retrieve complete DICOM instance.
 
         Args:
-            series_uid: The DICOM series UID
+            series_uid: Optional series prefix (None when root_path already scoped)
             instance_uid: The DICOM instance UID or filename
 
         Returns:
@@ -905,16 +935,9 @@ class DICOMRetriever:
             """Fetch single instance, return (url, Dataset or None)."""
             try:
                 if headers_only:
-                    # Parse path to extract series and instance
-                    parts = store_path.split('/', 1)
-                    if len(parts) >= 2:
-                        series_uid = parts[0]
-                        instance_part = parts[1]
-                        ds, _ = self._get_instance_headers(
-                            series_uid, instance_part, return_raw=return_raw
-                        )
-                    else:
-                        return (original_url, None)
+                    ds, _ = self._get_instance_headers(
+                        None, store_path, return_raw=return_raw
+                    )
                 else:
                     result = self.store.get(store_path)
                     data = bytes(result.bytes())

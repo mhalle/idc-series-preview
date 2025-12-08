@@ -16,6 +16,7 @@ Complete reference for the `SeriesIndex` class and composable patterns for worki
 ### SeriesIndex
 
 Entry point for accessing a DICOM series. Handles instance retrieval, caching, and image rendering.
+Pass a `SeriesInstanceUID` and it will be resolved to the series storage URL via the IDC index on first use. Indices are keyed by `SeriesInstanceUID` (`{SeriesInstanceUID}_index.parquet`) and store fully-resolved `_instance_url` and `_series_url` columns.
 
 ```python
 from idc_series_preview import SeriesIndex

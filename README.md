@@ -4,6 +4,8 @@ Command-line utilities for sampling, rendering, and indexing DICOM series in the
 
 > **Test scope:** Only IDC (S3) data paths are exercised in the CI/release flow. HTTP and local filesystem roots exist for convenience but are not guaranteed.
 
+Pass a `SeriesInstanceUID` on the CLI; the tool resolves storage via the IDC index, caches by `SeriesInstanceUID` (`{SeriesInstanceUID}_index.parquet`), and stores fully-resolved instance URLs in the index.
+
 ## Installation
 
 ```bash
@@ -97,7 +99,7 @@ You can also supply `window/level` or `window,level` directly, or use `auto` / `
 
 ## Index Workflow
 
-1. `build-index` generates parquet indices under `CACHE/indices/`. Each row stores the SOPInstanceUID, DataURL, primary axis metadata, normalized index (`IndexNormalized`), and every header field that varies.
+1. `build-index` generates parquet indices under `CACHE/indices/` as `{SeriesInstanceUID}_index.parquet`. Each row stores the SOPInstanceUID, the resolved `_instance_url`, `_series_url`, primary axis metadata, normalized index (`_index_normalized`), and every header field that varies.
 2. `get-index` reuses those files when present. If you need JSON or JSONL output, use `--output format:/path`. CSV support was intentionally removed to avoid lossy list serialization.
 3. `clear-index` deletes cached entries by UID or via `--all`.
 

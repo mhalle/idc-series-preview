@@ -72,7 +72,7 @@ def common_options(
             "--root",
             default="s3://idc-open-data",
             show_default=True,
-            help="Root path for DICOM files (S3, HTTP, or local path).",
+            help="Fallback root for DICOM files (used when IDC index resolution is unavailable or for local/HTTP overrides).",
         )(func)
         return func
 

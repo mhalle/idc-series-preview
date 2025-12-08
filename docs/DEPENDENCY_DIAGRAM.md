@@ -29,12 +29,12 @@
 ### API Layer (api.py)
 
 **SeriesIndex class** uses:
-- `load_or_generate_index()` (from index_cache module) → gets Polars DataFrame with columns: {Index, PrimaryPosition, DataURL, SOPInstanceUID, ...}
-- `DICOMRetriever(root_path, index_df)` → initialized once, reused
+- `load_or_generate_index()` (from index_cache module) → gets Polars DataFrame with columns: {_index, _primary_position, _instance_url, SOPInstanceUID, ...}
+- `DICOMRetriever(series_url, index_df)` → initialized once, reused
   - `get_instances(urls, headers_only)` → parallel fetch with progressive range requests
   - `get_instance_at_position(series_uid, position)` → (uid, dataset)
 - `MosaicGenerator.tile_images(images)` → PIL Image
-- `_parse_and_normalize_series()` → path parsing utility
+- `_parse_and_normalize_series()` → resolve SeriesInstanceUID to a series URL (IDC index or fallback)
 
 **Instance class** uses:
 - `dataset` (pydicom.Dataset) - cached in memory
@@ -47,7 +47,7 @@
 
 Module-level functions (no classes) for index loading and generation:
 
-- `load_or_generate_index(series_uid, root_path, index_dir, logger)` → Polars DataFrame
+- `load_or_generate_index(series_uid, series_url, index_dir, logger)` → Polars DataFrame
   - Primary public function for loading or generating series index
   - Tries to load existing Parquet cache first
   - Falls back to generating index from DICOM headers if cache missing
@@ -71,7 +71,7 @@ Module-level functions (no classes) for index loading and generation:
 ### Core Fetching (retriever.py)
 
 ```
-DICOMRetriever(root_path, index_df)
+DICOMRetriever(series_url, index_df)
 ├─ store (obstore) → S3/HTTP/local access
 ├─ index_df (optional Polars DataFrame)
 │
@@ -115,7 +115,7 @@ DICOMRetriever(root_path, index_df)
 ### Index Generation (index_cache.py)
 
 ```
-load_or_generate_index(series_uid, root_path)
+load_or_generate_index(series_uid, series_url)
 ├─ Try: load existing Parquet cache
 └─ Fallback:
    ├─ retriever.list_instances(series_uid)
@@ -148,9 +148,9 @@ MosaicGenerator(tile_width, tile_height, image_width, window_settings)
 ```
 SeriesIndex("series-uid")
   ↓
-_parse_and_normalize_series() [get root_path]
+_parse_and_normalize_series() [resolve series_url]
   ↓
-load_or_generate_index(series_uid, root_path)
+load_or_generate_index(series_uid, series_url)
   ├─ Try: Load existing Parquet cache → Polars DataFrame
   └─ Fallback: Generate from DICOM headers
      ├─ retriever.list_instances(series_uid)
@@ -158,7 +158,7 @@ load_or_generate_index(series_uid, root_path)
      ├─ _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
      └─ Save to Parquet cache
   ↓
-DICOMRetriever(root_path, index_df) [lazy init]
+DICOMRetriever(series_url, index_df) [lazy init]
 ```
 
 ### 2. Fetching Instances

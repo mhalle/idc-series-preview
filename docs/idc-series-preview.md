@@ -33,14 +33,17 @@ These options apply to most subcommands (where applicable):
 
 ### Series Specification
 
-All commands accept flexible series specifications:
+All commands accept flexible series specifications. The default flow is to pass a
+`SeriesInstanceUID`; it is resolved through the IDC index to a storage base URL
+(the series URL), and cached by `SeriesInstanceUID`. You normally do **not** need
+to provide an S3 URL on the CLI anymore.
 
 **Series UID Format**
 - Full UUID: `38902e14-b11f-4548-910e-771ee757dc82`
 - UUID without hyphens: `38902e14b11f4548910e771ee757dc82`
-- Full path: `s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82`
+- Full path (optional override, e.g., local/HTTP): `file:///data/dicom/38902e14-b11f-4548-910e-771ee757dc82`
 - Full path: `http://example.com/dicom/38902e14-b11f-4548-910e-771ee757dc82`
-- Local path: `file:///data/dicom/38902e14-b11f-4548-910e-771ee757dc82`
+- (Legacy) Full S3 path: `s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82`
 
 Partial prefixes and wildcards are not supported; always specify the complete SeriesInstanceUID or a fully-qualified path.
 
@@ -549,16 +552,18 @@ Index files are Parquet tables with one row per DICOM instance:
 
 **Metadata Columns**
 
-- **Index** (UInt32): Zero-based sort position (0 to N-1)
-- **DataURL** (Utf8): Fully-qualified resource URL identifying each instance
+- **_index** (UInt32): Zero-based sort position (0 to N-1)
+- **_index_normalized** (Float32): Normalized slice position (0.0-1.0)
+- **_instance_url** (Utf8): Fully-qualified resource URL identifying each instance
+- **_series_url** (Utf8): Fully-qualified series URL (trailing slash)
 - **SeriesUID** (Utf8): Series UID
 
 **Sorting Information**
 
-- **PrimaryPosition** (Float32): Actual coordinate on primary axis
+- **_primary_position** (Float32): Actual coordinate on primary axis
   - For spatial scans: X, Y, or Z coordinate in millimeters
   - For instance-number-only: InstanceNumber value
-- **PrimaryAxis** (Utf8): Which axis was used for sorting
+- **_primary_axis** (Utf8): Which axis was used for sorting
   - `'X'` - Sagittal (left-right varies most)
   - `'Y'` - Coronal (anterior-posterior varies most)
   - `'Z'` - Axial (superior-inferior varies most)
