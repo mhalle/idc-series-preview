@@ -16,6 +16,7 @@ then extracts necessary fields to build a Polars DataFrame.
 import hashlib
 import logging
 import os
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional, Any
@@ -67,6 +68,37 @@ VR_TO_POLARS_TYPE = {
     # Sequences (handled specially)
     "SQ": None,  # Sequence
 }
+
+
+def _serialize_value(value: Any) -> Any:
+    """Convert DICOM values (including sequences) into JSON-serializable Python types."""
+    from pydicom.dataset import Dataset
+    from pydicom.sequence import Sequence as DicomSequence
+    from pydicom.multival import MultiValue
+
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return {
+            "_type": "binary",
+            "size": len(value),
+            "hex_preview": value[:32].hex(),
+        }
+    if isinstance(value, Dataset):
+        return { (elem.keyword or elem.name or str(elem.tag)): _serialize_value(elem.value)
+                for elem in value if (elem.keyword or elem.name or str(elem.tag)) != "PixelData" }
+    if isinstance(value, DicomSequence):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, MultiValue) or isinstance(value, (list, tuple, set)):
+        return [_serialize_value(item) for item in value]
+    if hasattr(value, "tolist"):
+        try:
+            return _serialize_value(value.tolist())
+        except Exception:
+            return str(value)
+    return str(value)
 
 
 def dicom_header_to_dict(dataset: pydicom.Dataset) -> dict[str, Any]:
@@ -541,8 +573,11 @@ def _generate_parquet_table(
 
         # Skip sequences
         elif vr == "SQ":
-            logger.debug(f"Skipping sequence field: {keyword}")
-            continue
+            serialized = []
+            for val in values:
+                serialized.append(json.dumps(_serialize_value(val)))
+            column_data[keyword] = serialized
+            column_types[keyword] = pl.Utf8
 
         # Regular scalar/string fields
         else:
