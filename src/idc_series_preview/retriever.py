@@ -232,7 +232,12 @@ class DICOMRetriever:
         return self.get_instance_data(series_uid, identifier)
 
     def _get_instance_headers(
-        self, series_uid: str, instance_uid: str, max_bytes: int = 10000
+        self,
+        series_uid: str,
+        instance_uid: str,
+        max_bytes: int = 10000,
+        *,
+        return_raw: bool = False,
     ) -> Tuple[Optional[pydicom.Dataset], int]:
         """
         Retrieve DICOM headers via progressive range requests.
@@ -256,7 +261,8 @@ class DICOMRetriever:
             max_bytes: Ignored (kept for backward compatibility)
 
         Returns:
-            Tuple of (pydicom.Dataset or None, total_file_size)
+            Tuple of (pydicom.Dataset or None, total_file_size).
+            If return_raw=True, returns ((dataset or None, raw_bytes), total_file_size).
         """
         try:
             path = self._get_instance_path(series_uid, instance_uid)
@@ -293,6 +299,8 @@ class DICOMRetriever:
                         size = meta_data.get('size') if isinstance(meta_data, dict) else meta_data.size
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(f"Headers parsed successfully at {len(data)} bytes for {path}")
+                        if return_raw:
+                            return (ds, bytes(data)), size
                         return ds, size
                     except NotImplementedError as e:
                         # Unsupported compression, skip this file
@@ -319,6 +327,8 @@ class DICOMRetriever:
                 result = self.store.get(path)
                 full_data = bytes(result.bytes())
                 ds = pydicom.dcmread(BytesIO(full_data), stop_before_pixels=True, force=True)
+                if return_raw:
+                    return (ds, full_data), len(full_data)
                 return ds, len(full_data)
             except NotImplementedError as e:
                 if logger.isEnabledFor(logging.DEBUG):

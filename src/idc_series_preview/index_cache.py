@@ -17,6 +17,7 @@ import hashlib
 import logging
 import os
 import json
+import math
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional, Any
@@ -326,6 +327,7 @@ def _generate_parquet_table(
     datasets_by_uid: dict[str, pydicom.Dataset],
     series_uid: str,
     storage_root: str,
+    raw_headers_by_uid: Optional[dict[str, bytes]] = None,
 ) -> pl.DataFrame:
     """
     Generate a Polars DataFrame from DICOM datasets for parquet export.
@@ -421,6 +423,46 @@ def _generate_parquet_table(
     # Always include Index (sort order), DataURL, and primary position/axis metadata
     column_data["_index"] = list(range(len(instance_uids)))
     column_types["_index"] = pl.UInt32
+
+    # Pixel metadata (native only): track offset and frame size to enable range fetches later
+    pixeldata_offsets: list[Optional[int]] = []
+    frame_sizes: list[Optional[int]] = []
+
+    for uid in instance_uids:
+        dataset = datasets_by_uid[uid]
+        ts = dataset.file_meta.TransferSyntaxUID if hasattr(dataset, "file_meta") else None
+        # Only meaningful for native (uncompressed) transfer syntaxes
+        if ts and not ts.is_compressed:
+            try:
+                rows = int(dataset.Rows)
+                cols = int(dataset.Columns)
+                bits = int(dataset.BitsAllocated)
+                frame_size = math.ceil(rows * cols * bits / 8)
+            except Exception:
+                frame_size = None
+
+            frame_sizes.append(frame_size)
+            # Try to locate PixelData tag in raw header bytes if available
+            offset = None
+            raw_bytes = raw_headers_by_uid.get(uid) if raw_headers_by_uid else None
+            if raw_bytes:
+                tag = b"\xe0\x7f\x10\x00"  # PixelData little-endian
+                pos = raw_bytes.find(tag)
+                if pos != -1:
+                    vr = raw_bytes[pos + 4 : pos + 6]
+                    if vr in (b"OB", b"OW"):
+                        offset = pos + 12  # tag + VR + reserved + length (4)
+                    else:
+                        offset = pos + 8   # tag + implicit length
+            pixeldata_offsets.append(offset)
+        else:
+            pixeldata_offsets.append(None)
+            frame_sizes.append(None)
+
+    column_data["_pixel_data_offset"] = pixeldata_offsets
+    column_types["_pixel_data_offset"] = pl.Int64
+    column_data["_frame_size"] = frame_sizes
+    column_types["_frame_size"] = pl.Int64
 
     normalized_root = storage_root.rstrip('/') or storage_root
     # TODO(#local-relative-cache): for local storage roots, consider writing the
@@ -690,11 +732,20 @@ def load_or_generate_index(
         # Fetch headers in parallel using progressive range requests
         log.debug("Fetching DICOM headers...")
         urls = [f"{series_uid}/{uid}" for uid in instance_uids]
-        datasets_list = retriever.get_instances(urls, headers_only=True)
+        datasets_list = retriever.get_instances(urls, headers_only=True, return_raw=True)
 
         # Build dict mapping uid to dataset
         datasets_by_uid = {}
-        for uid, dataset in zip(instance_uids, datasets_list):
+        raw_headers_by_uid = {}
+        for uid, result in zip(instance_uids, datasets_list):
+            if result is None:
+                continue
+            # result can be (dataset, raw_bytes) when return_raw=True
+            if isinstance(result, tuple) and len(result) == 2:
+                dataset, raw_bytes = result
+                raw_headers_by_uid[uid] = raw_bytes
+            else:
+                dataset = result
             if dataset is not None:
                 datasets_by_uid[uid] = dataset
 
@@ -707,7 +758,7 @@ def load_or_generate_index(
         # Generate parquet table from datasets
         log.debug("Generating index parquet table...")
         storage_root = f"{root_path}/{series_uid}/"
-        df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root)
+        df = _generate_parquet_table(datasets_by_uid, series_uid, storage_root, raw_headers_by_uid)
 
         # Save to cache only if enabled
         if save_to_cache:
