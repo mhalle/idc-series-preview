@@ -60,6 +60,8 @@ def normalize_series_uid(series_uid: str) -> str:
 
     To standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
+    DICOM numeric UIDs (e.g., 1.2.840.10008.1.2.1) are passed through unchanged.
+
     Args:
         series_uid: Series UID with or without hyphens
 
@@ -73,6 +75,10 @@ def normalize_series_uid(series_uid: str) -> str:
         if not prefix:
             raise ValueError("Prefix cannot be empty")
         return f"{prefix}*"  # Return as prefix pattern
+
+    # If this looks like a numeric DICOM UID (digits and dots), return as-is
+    if '.' in series_uid and all(part.isdigit() for part in series_uid.split('.') if part):
+        return series_uid
 
     # Remove any existing hyphens for full UUID
     cleaned = series_uid.replace('-', '').lower()
@@ -154,11 +160,16 @@ def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logg
             series_url = get_series_url(series_uid)
             if series_url:
                 cleaned = series_url.rstrip("/")
-                if cleaned.endswith(series_uid):
-                    resolved_root = cleaned.rsplit("/", 1)[0]
-                    if resolved_root != root_path:
-                        logger.debug(f"Resolved series root via IDC index: {resolved_root}")
+                parts = cleaned.rsplit("/", 1)
+                if len(parts) == 2:
+                    resolved_root, resolved_uid = parts
+                    logger.info(f"Resolved series via IDC index: {series_url}")
                     root_path = resolved_root
+                    series_uid = resolved_uid
+                else:
+                    logger.debug(f"IDC index returned unexpected URL for {series_uid}: {series_url}")
+            else:
+                logger.debug(f"IDC index did not return a URL for {series_uid}")
         except Exception as e:
             logger.debug(f"IDC index lookup failed for {series_uid}: {e}")
 
