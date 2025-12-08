@@ -1,5 +1,6 @@
 import polars as pl
-from pydicom.dataset import Dataset
+from pydicom.dataset import Dataset, FileMetaDataset
+import struct
 
 from idc_series_preview.index_cache import _generate_parquet_table
 
@@ -61,3 +62,46 @@ def test_generate_parquet_table_normalized_index_multiple_slices():
     values = sorted(df["_index_normalized"].to_list())
     assert values == [0.0, 1.0]
     assert set(df["SOPInstanceUID"].to_list()) == {"1", "2"}
+
+
+def test_generate_parquet_table_stores_pixel_metadata_for_native_with_raw_header():
+    ds = make_dataset("1.2.3", [0.0, 0.0, 0.0], 1)
+    ds.Rows = 2
+    ds.Columns = 4
+    ds.BitsAllocated = 1
+    file_meta = FileMetaDataset()
+    file_meta.TransferSyntaxUID = "1.2.840.10008.1.2.1"  # Explicit VR Little Endian (native)
+    ds.file_meta = file_meta
+
+    prefix = b"\x01" * 10
+    pixel_tag = b"\xe0\x7f\x10\x00"  # PixelData
+    vr = b"OB"
+    reserved = b"\x00\x00"
+    length = struct.pack("<I", 4)
+    raw_bytes = prefix + pixel_tag + vr + reserved + length + b"\x00" * 4
+
+    df = _generate_parquet_table(
+        {"1.2.3": ds},
+        "series",
+        "s3://bucket",
+        {"1.2.3": raw_bytes},
+    )
+
+    assert df["_pixel_data_offset"].to_list()[0] == len(prefix) + 12
+    # frame size: ceil(2*4*1/8) = 1 byte
+    assert df["_frame_size"].to_list()[0] == 1
+
+
+def test_generate_parquet_table_pixel_metadata_none_for_compressed():
+    ds = make_dataset("9.9.9", [0.0, 0.0, 0.0], 1)
+    ds.Rows = 2
+    ds.Columns = 4
+    ds.BitsAllocated = 1
+    file_meta = FileMetaDataset()
+    file_meta.TransferSyntaxUID = "1.2.840.10008.1.2.4.50"  # JPEG Baseline (compressed)
+    ds.file_meta = file_meta
+
+    df = _generate_parquet_table({"9.9.9": ds}, "series", "s3://bucket")
+
+    assert df["_pixel_data_offset"].to_list()[0] is None
+    assert df["_frame_size"].to_list()[0] is None

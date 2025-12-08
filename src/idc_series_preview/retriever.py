@@ -874,6 +874,7 @@ class DICOMRetriever:
         urls: List[str],
         headers_only: bool = False,
         max_workers: Optional[int] = None,
+        return_raw: bool = False,
     ) -> List[Optional[pydicom.Dataset]]:
         """
         Fetch multiple DICOM instances in parallel from a list of URLs/paths.
@@ -886,6 +887,7 @@ class DICOMRetriever:
             headers_only: If True, fetch only DICOM headers via progressive range requests.
                          If False, fetch complete instances.
             max_workers: Number of parallel fetch threads
+            return_raw: When headers_only=True, return (dataset, raw_bytes) tuples
 
         Returns:
             List of pydicom.Dataset objects (or None for failed URLs).
@@ -908,7 +910,9 @@ class DICOMRetriever:
                     if len(parts) >= 2:
                         series_uid = parts[0]
                         instance_part = parts[1]
-                        ds, _ = self._get_instance_headers(series_uid, instance_part)
+                        ds, _ = self._get_instance_headers(
+                            series_uid, instance_part, return_raw=return_raw
+                        )
                     else:
                         return (original_url, None)
                 else:
