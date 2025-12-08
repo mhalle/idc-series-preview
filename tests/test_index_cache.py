@@ -90,6 +90,7 @@ def test_generate_parquet_table_stores_pixel_metadata_for_native_with_raw_header
     assert df["_pixel_data_offset"].to_list()[0] == len(prefix) + 12
     # frame size: ceil(2*4*1/8) = 1 byte
     assert df["_frame_size"].to_list()[0] == 1
+    assert df["_transfer_syntax_uid"].to_list()[0] == "1.2.840.10008.1.2.1"
 
 
 def test_generate_parquet_table_pixel_metadata_none_for_compressed():
@@ -105,3 +106,4 @@ def test_generate_parquet_table_pixel_metadata_none_for_compressed():
 
     assert df["_pixel_data_offset"].to_list()[0] is None
     assert df["_frame_size"].to_list()[0] is None
+    assert df["_transfer_syntax_uid"].to_list()[0] == "1.2.840.10008.1.2.4.50"

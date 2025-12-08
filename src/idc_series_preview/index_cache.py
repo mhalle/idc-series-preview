@@ -427,12 +427,14 @@ def _generate_parquet_table(
     # Pixel metadata (native only): track offset and frame size to enable range fetches later
     pixeldata_offsets: list[Optional[int]] = []
     frame_sizes: list[Optional[int]] = []
+    transfer_syntaxes: list[Optional[str]] = []
 
     for uid in instance_uids:
         dataset = datasets_by_uid[uid]
         ts = dataset.file_meta.TransferSyntaxUID if hasattr(dataset, "file_meta") else None
         # Only meaningful for native (uncompressed) transfer syntaxes
         if ts and not ts.is_compressed:
+            transfer_syntaxes.append(str(ts))
             try:
                 rows = int(dataset.Rows)
                 cols = int(dataset.Columns)
@@ -458,11 +460,14 @@ def _generate_parquet_table(
         else:
             pixeldata_offsets.append(None)
             frame_sizes.append(None)
+            transfer_syntaxes.append(str(ts) if ts else None)
 
     column_data["_pixel_data_offset"] = pixeldata_offsets
     column_types["_pixel_data_offset"] = pl.Int64
     column_data["_frame_size"] = frame_sizes
     column_types["_frame_size"] = pl.Int64
+    column_data["_transfer_syntax_uid"] = transfer_syntaxes
+    column_types["_transfer_syntax_uid"] = pl.Utf8
 
     normalized_root = storage_root.rstrip('/') or storage_root
     # TODO(#local-relative-cache): for local storage roots, consider writing the
