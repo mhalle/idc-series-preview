@@ -1,6 +1,7 @@
 """Utilities for parsing and normalizing DICOM series specifications."""
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 
@@ -93,7 +94,12 @@ def normalize_series_uid(series_uid: str) -> str:
     return formatted
 
 
-def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logger) -> Optional[tuple[str, str]]:
+def parse_and_normalize_series(
+    series_spec: str,
+    root: str,
+    logger: logging.Logger,
+    cache_dir: Optional[str | Path] = None,
+) -> Optional[tuple[str, str]]:
     """
     Parse, normalize, and resolve series specification.
 
@@ -106,7 +112,8 @@ def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logg
         logger: Logger instance
 
     Returns:
-        Tuple of (root_path, series_uid) on success
+        Tuple of (series_uid, series_url) on success where series_url always
+        has a trailing slash.
         None on error (error already logged)
     """
     from .retriever import DICOMRetriever
@@ -114,13 +121,24 @@ def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logg
     # Parse series specification (can be UID or full path)
     try:
         root_path, parsed_spec = parse_series_specification(series_spec, root)
-
-        # If a full path was provided and --root was also specified, note the override
-        if root_path != root:
-            logger.debug(f"Full path specified, overriding --root with: {root_path}")
     except ValueError as e:
         logger.error(f"Invalid series specification: {e}")
         return None
+
+    # Helper to normalize a series storage URL with trailing slash
+    def _normalize_series_url(url: str) -> str:
+        cleaned = url.rstrip("/*")
+        return cleaned if cleaned.endswith("/") else cleaned + "/"
+
+    # If a full path was provided, honor it directly (used for local/HTTP overrides)
+    if series_spec.startswith(("s3://", "http://", "https://", "file://")):
+        try:
+            series_uid = normalize_series_uid(parsed_spec)
+        except ValueError as e:
+            logger.error(f"Invalid series UID: {e}")
+            return None
+
+        return series_uid, _normalize_series_url(series_spec)
 
     # Normalize series UID (add hyphens if not present, or prepare for prefix search)
     try:
@@ -152,25 +170,52 @@ def parse_and_normalize_series(series_spec: str, root: str, logger: logging.Logg
             series_uid = matches[0]
             logger.info(f"Found matching series: {series_uid}")
 
-    # If the user provided only a UID (not a full path), try resolving the IDC S3 URL.
-    if root_path == root:
+    series_url: Optional[str] = None
+
+    # Prefer cached index (if present) to avoid remote lookups on repeat calls
+    try:
+        if cache_dir is None:
+            from .index_cache import get_cache_directory
+
+            resolved_cache_dir = get_cache_directory()
+        else:
+            resolved_cache_dir = Path(cache_dir)
+
+        from .index_cache import get_index_path
+
+        index_path = get_index_path(series_uid, resolved_cache_dir)
+        if index_path.exists():
+            import polars as pl
+
+            try:
+                df = pl.read_parquet(str(index_path), columns=["_series_url"])
+                cached_url = df["_series_url"][0] if len(df) else None
+                if cached_url:
+                    series_url = _normalize_series_url(str(cached_url))
+                    logger.debug(f"Using cached series URL from index: {series_url}")
+                    return series_uid, series_url
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"Failed to read cached index at {index_path}: {e}")
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Cache lookup failed for {series_uid}: {e}")
+    # Only UUID-like SeriesInstanceUIDs should consult idc-index; dotted UIDs
+    # (numeric DICOM) should fall back to the provided root.
+    cleaned = series_uid.replace("-", "")
+    is_uuid_like = len(cleaned) == 32 and all(c in "0123456789abcdef" for c in cleaned.lower())
+    if is_uuid_like:
         try:
             from .idc_index_client import get_series_url
 
             series_url = get_series_url(series_uid)
             if series_url:
-                cleaned = series_url.rstrip("/")
-                parts = cleaned.rsplit("/", 1)
-                if len(parts) == 2:
-                    resolved_root, resolved_uid = parts
-                    logger.info(f"Resolved series via IDC index: {series_url}")
-                    root_path = resolved_root
-                    series_uid = resolved_uid
-                else:
-                    logger.debug(f"IDC index returned unexpected URL for {series_uid}: {series_url}")
-            else:
-                logger.debug(f"IDC index did not return a URL for {series_uid}")
+                logger.info(f"Resolved series via IDC index: {series_url}")
         except Exception as e:
             logger.debug(f"IDC index lookup failed for {series_uid}: {e}")
 
-    return root_path, series_uid
+    # Fallback to provided root (primarily for local/override scenarios)
+    if not series_url:
+        normalized_root = root.rstrip("/")
+        series_url = f"{normalized_root}/{series_uid}"
+        logger.debug(f"Falling back to root-derived series URL: {series_url}")
+
+    return series_uid, _normalize_series_url(series_url)

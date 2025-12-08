@@ -458,14 +458,11 @@ class SeriesIndex:
         Parameters
         ----------
         series : str
-            Series UID or full path.
-            Examples:
-            - "38902e14-b11f-4548-910e-771ee757dc82"
-            - "s3://idc-open-data/38902e14-b11f-4548-910e-771ee757dc82"
-            - "/local/dicom/series-uid"
+            SeriesInstanceUID (preferred) or a full series path (for local/HTTP overrides).
 
         root : str, default "s3://idc-open-data"
-            Root storage path. Overridden if series contains full path.
+            Fallback root used only when IDC index resolution is unavailable and no full
+            series URL is provided. Cache keys are always the SeriesInstanceUID.
 
         cache_dir : str or None, default None
             Cache directory for indices. If None, uses platform default.
@@ -486,12 +483,12 @@ class SeriesIndex:
         self._logger.debug(f"Initializing SeriesIndex for {series}")
 
         # Parse and normalize series specification
-        result = parse_and_normalize_series(series, root, self._logger)
+        result = parse_and_normalize_series(series, root, self._logger, cache_dir)
         if result is None:
             raise ValueError(f"Could not resolve series: {series}")
 
-        self._root_path, self._series_uid = result
-        self._logger.debug(f"Resolved to UID: {self._series_uid}, Root: {self._root_path}")
+        self._series_uid, self._series_url = result
+        self._logger.debug(f"Resolved to UID: {self._series_uid}, URL: {self._series_url}")
 
         self._use_cache = use_cache
         self._cache_dir = cache_dir
@@ -501,7 +498,7 @@ class SeriesIndex:
         # If use_cache=False, still generates but doesn't save to disk
         index_df = load_or_generate_index(
             series_uid=self._series_uid,
-            root_path=self._root_path,
+            series_url=self._series_url,
             index_dir=cache_dir,
             logger_instance=self._logger,
             save_to_cache=use_cache,
@@ -522,8 +519,13 @@ class SeriesIndex:
 
     @property
     def root_path(self) -> str:
-        """Storage root path."""
-        return self._root_path
+        """Storage root path (deprecated; use series_url)."""
+        return self._series_url
+
+    @property
+    def series_url(self) -> str:
+        """Fully-resolved series storage URL."""
+        return self._series_url
 
     @property
     def instance_count(self) -> int:
@@ -593,7 +595,11 @@ class SeriesIndex:
             Initialized retriever for this series
         """
         if self._retriever is None:
-            self._retriever = DICOMRetriever(self._root_path, index_df=self._index_df)
+            self._retriever = DICOMRetriever(
+                self._series_url,
+                index_df=self._index_df,
+                series_prefix="",
+            )
         return self._retriever
 
     def get_instances(

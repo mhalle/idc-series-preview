@@ -9,7 +9,7 @@ from .constants import IDC_INDEX_URL
 
 def get_series_url(series_uid: str) -> Optional[str]:
     """
-    Resolve the S3 URL for a series using the published IDC index parquet.
+    Resolve the storage URL for a series using the published IDC index parquet.
 
     Parameters
     ----------
@@ -19,7 +19,7 @@ def get_series_url(series_uid: str) -> Optional[str]:
     Returns
     -------
     Optional[str]
-        The series_aws_url if found; otherwise None.
+        The series_aws_url base (trailing slash) if found; otherwise None.
     """
     if not series_uid:
         return None

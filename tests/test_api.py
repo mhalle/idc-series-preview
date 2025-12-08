@@ -25,7 +25,7 @@ class TestSeriesIndex:
         """Test basic SeriesIndex initialization."""
         index = SeriesIndex(TEST_SERIES_UID, root=TEST_S3_ROOT)
         assert index.series_uid == TEST_SERIES_UID
-        assert index.root_path == TEST_S3_ROOT
+        assert index.series_url.endswith(f"{TEST_SERIES_UID}/")
         assert index.instance_count > 0
         assert len(index) == index.instance_count
 
@@ -250,7 +250,7 @@ def _make_fake_series_index(retriever, uid_url_pairs):
         }
     )
     index._series_uid = "series"
-    index._root_path = "root"
+    index._series_url = "root/"
     index._cache_dir = None
     index._use_cache = True
     index._retriever = retriever

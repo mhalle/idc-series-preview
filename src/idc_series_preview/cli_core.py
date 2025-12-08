@@ -1276,10 +1276,10 @@ def clear_index_command(args, logger):
 
         removed = 0
         for series_spec in args.series:
-            result = parse_and_normalize_series(series_spec, args.root, logger)
+            result = parse_and_normalize_series(series_spec, args.root, logger, args.cache_dir)
             if result is None:
                 continue
-            _, series_uid = result
+            series_uid, _ = result
             index_path = get_index_path(series_uid, cache_dir)
             if index_path.exists():
                 index_path.unlink()
