@@ -249,10 +249,10 @@ class DICOMRetriever:
         - Fourth chunk: +50KB if needed (~72.5KB total)
         - Fifth chunk: +50KB if needed (~122.5KB total)
         - Sixth chunk: +500KB if needed (~622.5KB total)
-        - Seventh chunk: +5000KB if needed (~5622.5KB total)
-        - Eighth chunk: +20000KB if needed (~25622.5KB total)
-        - Ninth chunk: +20000KB if needed (~45622.5KB total)
-        - Tenth chunk: +20000KB if needed (~65622.5KB total)
+        - Seventh chunk: +10000KB if needed (~10622.5KB total)
+        - Eighth chunk: +20000KB if needed (~30622.5KB total)
+        - Ninth chunk: +20000KB if needed (~50622.5KB total)
+        - Tenth chunk: +20000KB if needed (~70622.5KB total)
         - Fallback: Full file if progressive chunks exhausted
 
         Args:
@@ -267,7 +267,7 @@ class DICOMRetriever:
         try:
             path = self._get_instance_path(series_uid, instance_uid)
 
-            # Progressive chunk sizes: start small, then larger 50KB, 500KB, 5MB, and multiple 20MB blocks
+            # Progressive chunk sizes: start small, then larger 50KB, 500KB, 10MB, and multiple 20MB blocks
             chunk_sizes = [
                 5120,
                 7680,
@@ -275,7 +275,7 @@ class DICOMRetriever:
                 51200,
                 51200,
                 512000,
-                5120000,
+                10240000,
                 20000000,
                 20000000,
                 20000000,
