@@ -20,7 +20,7 @@ from PIL import Image
 from .image_utils import MosaicRenderer, save_image
 from .contrast import ContrastPresets
 from .index_cache import get_cache_directory
-from .constants import DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_QUALITY
+from .constants import DEFAULT_IMAGE_QUALITY
 from .workers import optimal_workers
 
 
@@ -881,7 +881,7 @@ def video_command(args, logger):
     frame_count = 0
     from .image_utils import InstanceRenderer
     renderer = InstanceRenderer(
-        image_width=args.width if args.width is not None else DEFAULT_IMAGE_WIDTH,
+        image_width=args.width,
         window_settings=window_settings,
     )
 

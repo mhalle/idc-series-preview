@@ -388,7 +388,7 @@ def header_click(
     "-w",
     "--width",
     type=int,
-    help="Frame width in pixels.",
+    help="Frame width in pixels (defaults to original frame size).",
 )
 @click.option(
     "-q",
