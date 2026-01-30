@@ -19,6 +19,24 @@ Latest release:
 - https://github.com/mhalle/idc-series-preview/releases/latest/download/idc-series-preview.zip
 - https://github.com/mhalle/idc-series-preview/releases/latest/download/idc-series-preview.skill
 
+## Version Check and Update
+
+To check if this skill is up to date:
+
+1. **Get current version**: Read `$SKILL_DIR/src/idc_series_preview/_version.py` or check `fallback-version` in `$SKILL_DIR/pyproject.toml`
+
+2. **Get latest version**: Fetch from GitHub API:
+   ```
+   https://api.github.com/repos/mhalle/idc-series-preview/releases/latest
+   ```
+   The `tag_name` field contains the latest version (e.g., `v0.6.1`).
+
+3. **If outdated**: Download the latest skill file and present it to the user:
+   ```
+   https://github.com/mhalle/idc-series-preview/releases/latest/download/idc-series-preview.skill
+   ```
+   Presenting the downloaded `.skill` file may trigger a dialog allowing the user to update their installed skill.
+
 ## Installation
 
 Run the install script:
