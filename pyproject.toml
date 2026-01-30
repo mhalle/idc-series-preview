@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "idc-series-preview"
-version = "0.5.2"
+dynamic = ["version"]
 description = "Preview DICOM series stored on S3, HTTP, or local files with intelligent sampling and visualization"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -50,6 +50,13 @@ gdcm = [
 
 [project.scripts]
 idc-series-preview = "idc_series_preview.cli_click:cli"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/idc_series_preview/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/idc_series_preview"]
