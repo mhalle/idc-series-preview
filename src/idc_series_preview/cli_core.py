@@ -559,7 +559,8 @@ def mosaic_command(args, logger):
 
         from .image_utils import (
             InstanceRenderer, MosaicRenderer, add_image_labels,
-            format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+            format_position_label, format_contrast_label, format_primary_position_label,
+            MIN_LABEL_WIDTH,
         )
         from .contrast import ContrastPresets
 
@@ -586,6 +587,10 @@ def mosaic_command(args, logger):
             if labels_enabled and img.width >= MIN_LABEL_WIDTH and wl_values:
                 img = add_image_labels(img, {
                     "tl": format_position_label(instance._get_normalized_position()),
+                    "tr": format_primary_position_label(
+                        instance._get_primary_position(),
+                        series_index.primary_axis,
+                    ),
                     "br": format_contrast_label(wl_values["window_width"], wl_values["window_center"]),
                 })
 
@@ -697,7 +702,8 @@ def image_command(args, logger):
         try:
             from .image_utils import (
                 InstanceRenderer, add_image_labels,
-                format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+                format_position_label, format_contrast_label, format_primary_position_label,
+                MIN_LABEL_WIDTH,
             )
             from .contrast import ContrastPresets
 
@@ -722,6 +728,10 @@ def image_command(args, logger):
             if wl_values:
                 output_image = add_image_labels(output_image, {
                     "tl": format_position_label(instance._get_normalized_position()),
+                    "tr": format_primary_position_label(
+                        instance._get_primary_position(),
+                        series_index.primary_axis,
+                    ),
                     "br": format_contrast_label(wl_values["window_width"], wl_values["window_center"]),
                 })
 
@@ -929,7 +939,8 @@ def video_command(args, logger):
     frame_count = 0
     from .image_utils import (
         InstanceRenderer, add_image_labels,
-        format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+        format_position_label, format_contrast_label, format_primary_position_label,
+        MIN_LABEL_WIDTH,
     )
     from .contrast import ContrastPresets
     renderer = InstanceRenderer(
@@ -973,6 +984,10 @@ def video_command(args, logger):
                     if wl_values:
                         image = add_image_labels(image, {
                             "tl": format_position_label(instance._get_normalized_position()),
+                            "tr": format_primary_position_label(
+                                instance._get_primary_position(),
+                                series_index.primary_axis,
+                            ),
                             "br": format_contrast_label(wl_values["window_width"], wl_values["window_center"]),
                         })
 
@@ -1120,7 +1135,8 @@ def contrast_mosaic_command(args, logger):
 
         from .image_utils import (
             InstanceRenderer, MosaicRenderer, add_image_labels,
-            format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+            format_position_label, format_contrast_label, format_primary_position_label,
+            MIN_LABEL_WIDTH,
         )
 
         labels_enabled = getattr(args, 'labels', True)
@@ -1185,6 +1201,10 @@ def contrast_mosaic_command(args, logger):
                     if wl_values:
                         img = add_image_labels(img, {
                             "tl": format_position_label(instance._get_normalized_position()),
+                            "tr": format_primary_position_label(
+                                instance._get_primary_position(),
+                                series_index.primary_axis,
+                            ),
                             "br": format_contrast_label(wl_values['window_width'], wl_values['window_center']),
                         })
 

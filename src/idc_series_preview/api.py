@@ -21,6 +21,7 @@ from .image_utils import (
     add_image_labels,
     format_position_label,
     format_contrast_label,
+    format_primary_position_label,
     MIN_LABEL_WIDTH,
 )
 from .contrast import ContrastPresets
@@ -319,6 +320,10 @@ class Instance:
             if wl is not None:
                 img = add_image_labels(img, {
                     "tl": format_position_label(self._get_normalized_position()),
+                    "tr": format_primary_position_label(
+                        self._get_primary_position(),
+                        self._series_index.primary_axis,
+                    ),
                     "br": format_contrast_label(wl["window_width"], wl["window_center"]),
                 })
 
@@ -342,6 +347,31 @@ class Instance:
         if matching.height > 0 and total > 1:
             index = matching[0, "_index"]
             return index / (total - 1)
+        return 0.0
+
+    def _get_primary_position(self) -> float:
+        """
+        Get the raw primary position value from the index.
+
+        Returns the actual DICOM position value (e.g., Z coordinate from
+        ImagePositionPatient) rather than the normalized 0-1 position.
+
+        Returns
+        -------
+        float
+            Primary position value, or 0.0 if not available
+        """
+        import polars as pl
+
+        df = self._series_index._index_df
+        if "_primary_position" not in df.columns:
+            return 0.0
+
+        matching = df.filter(pl.col("SOPInstanceUID") == self.instance_uid)
+        if matching.height > 0:
+            value = matching[0, "_primary_position"]
+            if value is not None:
+                return float(value)
         return 0.0
 
     def _resolve_contrast_values(

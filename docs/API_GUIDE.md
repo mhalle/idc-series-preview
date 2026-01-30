@@ -96,11 +96,16 @@ instances = index.get_instances(positions=[...], max_workers=4)
 ```python
 instance = index.get_instance(position=0.5)
 instance = index.get_instance(slice_number=50)
+
+# Get adjacent slices using slice_offset
+next_slice = index.get_instance(position=0.5, slice_offset=1)   # next slice
+prev_slice = index.get_instance(position=0.5, slice_offset=-1)  # previous slice
 ```
 
 **Parameters:**
 - `position`: float (0.0-1.0), mutually exclusive with `slice_number`
 - `slice_number`: int, mutually exclusive with `position`
+- `slice_offset`: int, default 0 - offset from selected position/slice (positive=forward, negative=backward)
 
 **Returns:** single `Instance` object
 

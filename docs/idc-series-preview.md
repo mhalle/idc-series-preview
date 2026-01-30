@@ -114,6 +114,7 @@ Partial prefixes and wildcards are not supported; always specify the complete Se
 
 **Label positions and format:**
 - **Top-left**: Normalized position (`0.0000` to `1.0000`) indicating slice location within the series
+- **Top-right**: Primary position with axis prefix (e.g., `Z:-640.5`) - the actual DICOM coordinate in millimeters from `ImagePositionPatient` or `SliceLocation`
 - **Bottom-right**: Window/level contrast settings (e.g., `W2000/L-600`)
 
 Labels use the bundled Oswald Bold font (14pt) with black text on a white background.

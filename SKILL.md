@@ -130,6 +130,10 @@ Generate a single image from a DICOM series at a specified position.
 
 ```bash
 idc-series-preview image <series-uuid> output.webp --position 0.5 --width 512
+
+# Get adjacent slices using --slice-offset
+idc-series-preview image <series-uuid> next.webp --position 0.5 --slice-offset 1   # next slice
+idc-series-preview image <series-uuid> prev.webp --position 0.5 --slice-offset -1  # previous slice
 ```
 
 ### mosaic
@@ -174,6 +178,7 @@ Built-in presets for common viewing windows:
 
 Images include overlay labels showing:
 - **Top-left**: Normalized position (0.0000 to 1.0000)
+- **Top-right**: Primary position with axis (e.g., Z:-640.5) - actual DICOM coordinate in mm
 - **Bottom-right**: Window/Level contrast (e.g., W2000/L-600)
 
 Use `--no-labels` to disable.

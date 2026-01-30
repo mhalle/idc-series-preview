@@ -157,6 +157,27 @@ def format_contrast_label(window_width: float, window_center: float) -> str:
     return f"W{int(window_width)}/L{int(window_center)}"
 
 
+def format_primary_position_label(position: float, axis: str = "") -> str:
+    """
+    Format primary position (actual DICOM coordinate) as a label string.
+
+    Parameters
+    ----------
+    position : float
+        Primary position value (e.g., Z coordinate from ImagePositionPatient)
+    axis : str, default ""
+        Axis prefix (e.g., "Z", "X", "Y") or empty string for no prefix
+
+    Returns
+    -------
+    str
+        Formatted label like "Z:-156.5"
+    """
+    if axis:
+        return f"{axis}:{position:.1f}"
+    return f"{position:.1f}"
+
+
 def add_image_labels(
     image: Image.Image,
     labels: Dict[str, str],

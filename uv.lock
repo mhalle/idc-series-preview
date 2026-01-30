@@ -359,7 +359,6 @@ wheels = [
 
 [[package]]
 name = "idc-series-preview"
-version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
