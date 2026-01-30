@@ -1,6 +1,6 @@
 ---
 name: idc-series-preview
-description: Preview and visualize DICOM imaging series from the NCI Imaging Data Commons (IDC). Use when generating image previews, mosaics, videos, or contrast comparisons from DICOM series. Triggers on "DICOM preview", "IDC series", "medical imaging mosaic", "CT/MR preview", or series visualization tasks.
+description: Preview and visualize DICOM imaging series from the NCI Imaging Data Commons (IDC). Use when the user wants to view, preview, or visualize IDC series data. Triggers on "IDC image", "IDC series", "IDC preview", "Imaging Data Commons", or when working with IDC series UIDs.
 license: MIT
 compatibility: Requires uv and Python 3.9+. Requires network access to IDC S3 storage. Video generation requires ffmpeg to be installed.
 metadata:

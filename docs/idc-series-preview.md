@@ -106,6 +106,18 @@ Partial prefixes and wildcards are not supported; always specify the complete Se
 : Disable index caching. Fetches DICOM headers fresh from storage every run.
 : By default caching is enabled using `IDC_SERIES_PREVIEW_CACHE_DIR` environment variable or platform cache directory
 
+### Label Options
+
+`--no-labels`
+: Disable overlay labels on images. By default, labels are shown on all rendered images.
+: Labels are automatically skipped on tiles smaller than 64 pixels wide.
+
+**Label positions and format:**
+- **Top-left**: Normalized position (`0.0000` to `1.0000`) indicating slice location within the series
+- **Bottom-right**: Window/level contrast settings (e.g., `W2000/L-600`)
+
+Labels use the bundled Oswald Bold font (14pt) with black text on a white background.
+
 ### Quality Options (Still Images)
 
 `-q, --quality LEVEL`
