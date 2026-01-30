@@ -110,3 +110,10 @@ Accepts multiple UID formats:
 - Full DICOM UID: `1.3.6.1.4...`
 - IDC UUID: `38902e14-b11f-4548-910e-771ee757dc82`
 - Dotted UUID: `38902e14.b11f.4548.910e.771ee757dc82`
+
+## Documentation
+
+Full documentation is available in the `docs/` directory:
+- `docs/idc-series-preview.md` - Complete CLI reference (man page format)
+- `docs/API_GUIDE.md` - Python API usage guide
+- `docs/DEPENDENCY_DIAGRAM.md` - Module architecture
