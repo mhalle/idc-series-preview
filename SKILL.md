@@ -67,41 +67,87 @@ sh $SKILL_DIR/scripts/install.sh --force
 
 Note: `$SKILL_DIR` refers to the skill directory path (e.g., `/mnt/skills/idc-series-preview` depending on platform).
 
+## Critical: Series UID Resolution for IDC Data
+
+**When working with IDC data, you must use the `crdc_series_uuid`, NOT the DICOM `SeriesInstanceUID`.**
+
+IDC's S3 bucket (`s3://idc-open-data`) organizes files by `crdc_series_uuid` (a UUID like `ca81385b-facf-487e-aa50-2a5d0b97e173`), not by DICOM SeriesInstanceUID (like `1.3.6.1.4.1.14519...`). If you pass a DICOM SeriesInstanceUID, the tool will fail to find files.
+
+### When querying with idc-index, always include crdc_series_uuid:
+
+```python
+from idc_index import IDCClient
+client = IDCClient()
+
+df = client.sql_query("""
+    SELECT SeriesInstanceUID, crdc_series_uuid, series_size_MB, 
+           Modality, SeriesDescription
+    FROM index 
+    WHERE collection_id = 'nlst'
+    AND Modality = 'CT'
+    LIMIT 5
+""")
+
+# Use crdc_series_uuid with idc-series-preview, NOT SeriesInstanceUID
+uuid = df['crdc_series_uuid'].iloc[0]
+```
+
+Then use the UUID:
+```bash
+idc-series-preview mosaic "ca81385b-facf-487e-aa50-2a5d0b97e173" output.webp
+```
+
+### Accepted UID formats:
+- **IDC UUID (required for IDC data)**: `38902e14-b11f-4548-910e-771ee757dc82`
+- Dotted UUID: `38902e14.b11f.4548.910e.771ee757dc82`
+- Full DICOM UID: Only works for non-IDC sources where files are organized by SeriesInstanceUID
+
+## Known Limitations: JPEG Transfer Syntaxes
+
+Some older DICOM data uses **JPEG Extended with 12-bit precision**, which Pillow cannot decode. This is common in certain collections (e.g., some NLST series). 
+
+**Symptoms:**
+```
+NotImplementedError: Pillow does not support 'JPEG Extended' for samples with 12-bit precision
+```
+
+**Workaround:** Try a different series from the same collection. There's no way to filter by transfer syntax in idc-index queries, so this requires trial and error. Larger series (50-100MB) from the same patient often use different encoding than smaller ones.
+
 ## Commands
 
 ### image
 Generate a single image from a DICOM series at a specified position.
 
 ```bash
-idc-series-preview image <series-uid> output.webp --position 0.5 --width 512
+idc-series-preview image <series-uuid> output.webp --position 0.5 --width 512
 ```
 
 ### mosaic
 Create a tiled grid of images sampling across the series.
 
 ```bash
-idc-series-preview mosaic <series-uid> output.webp --samples 9 --width 768
+idc-series-preview mosaic <series-uuid> output.webp --samples 9 --width 768
 ```
 
 ### contrast-mosaic
 Compare the same slice under different window/level contrast settings.
 
 ```bash
-idc-series-preview contrast-mosaic <series-uid> output.webp --position 0.5 -c lung -c bone -c soft
+idc-series-preview contrast-mosaic <series-uuid> output.webp --position 0.5 -c lung -c bone -c soft
 ```
 
 ### video
 Generate an MP4 video scrolling through the series.
 
 ```bash
-idc-series-preview video <series-uid> output.mp4 --fps 15 --width 512
+idc-series-preview video <series-uuid> output.mp4 --fps 15 --width 512
 ```
 
 ### headers
 Display DICOM header metadata for a series.
 
 ```bash
-idc-series-preview headers <series-uid> --format json
+idc-series-preview headers <series-uuid> --format json
 ```
 
 ## Contrast Presets
@@ -122,12 +168,33 @@ Images include overlay labels showing:
 
 Use `--no-labels` to disable.
 
-## Series UID Resolution
+## Complete Workflow Example
 
-Accepts multiple UID formats:
-- Full DICOM UID: `1.3.6.1.4...`
-- IDC UUID: `38902e14-b11f-4548-910e-771ee757dc82`
-- Dotted UUID: `38902e14.b11f.4548.910e.771ee757dc82`
+```python
+# 1. Query IDC for series (note: include crdc_series_uuid!)
+from idc_index import IDCClient
+client = IDCClient()
+
+df = client.sql_query("""
+    SELECT SeriesInstanceUID, crdc_series_uuid, series_size_MB, 
+           PatientID, Modality, SeriesDescription
+    FROM index 
+    WHERE collection_id = 'nlst'
+    AND Modality = 'CT'
+    AND series_size_MB BETWEEN 50 AND 100
+    LIMIT 5
+""")
+
+# 2. Get the UUID (not the SeriesInstanceUID!)
+series_uuid = df['crdc_series_uuid'].iloc[0]
+print(f"Using series: {series_uuid}")
+```
+
+```bash
+# 3. Generate preview using the UUID
+idc-series-preview mosaic "ca81385b-facf-487e-aa50-2a5d0b97e173" output.webp \
+    --samples 9 --width 768 --contrast lung
+```
 
 ## Documentation
 
