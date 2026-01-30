@@ -16,7 +16,14 @@ except ImportError:  # pragma: no cover - fallback for older pydicom
 from .series_spec import parse_and_normalize_series
 from .index_cache import load_or_generate_index
 from .retriever import DICOMRetriever
-from .image_utils import InstanceRenderer
+from .image_utils import (
+    InstanceRenderer,
+    add_image_labels,
+    format_position_label,
+    format_contrast_label,
+    MIN_LABEL_WIDTH,
+)
+from .contrast import ContrastPresets
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +264,7 @@ class Instance:
         self,
         contrast: Optional[Union[str, Contrast]] = None,
         image_width: int = 128,
+        labels: bool = True,
     ) -> Image.Image:
         """
         Render this instance as an image.
@@ -269,6 +277,10 @@ class Instance:
 
         image_width : int, default 128
             Width of output image in pixels. Height is scaled proportionally.
+
+        labels : bool, default True
+            If True, add slice position and contrast labels to the image.
+            Labels are skipped if image width < 64px.
 
         Returns
         -------
@@ -299,7 +311,86 @@ class Instance:
         if img is None:
             raise ValueError(f"Failed to render image for instance {self.instance_uid}")
 
+        # Add labels if requested and image is large enough
+        if labels and img.width >= MIN_LABEL_WIDTH:
+            # Resolve contrast to W/L values
+            wl = self._resolve_contrast_values(contrast)
+
+            if wl is not None:
+                img = add_image_labels(img, {
+                    "tl": format_position_label(self._get_normalized_position()),
+                    "br": format_contrast_label(wl["window_width"], wl["window_center"]),
+                })
+
         return img
+
+    def _get_normalized_position(self) -> float:
+        """
+        Get normalized position (0.0 to 1.0) within parent series.
+
+        Returns
+        -------
+        float
+            Normalized position where 0.0 is first slice, 1.0 is last slice
+        """
+        import polars as pl
+
+        df = self._series_index._index_df
+        matching = df.filter(pl.col("SOPInstanceUID") == self.instance_uid)
+
+        total = self._series_index.instance_count
+        if matching.height > 0 and total > 1:
+            index = matching[0, "_index"]
+            return index / (total - 1)
+        return 0.0
+
+    def _resolve_contrast_values(
+        self, contrast: Optional[Union[str, Contrast]]
+    ) -> Optional[dict]:
+        """
+        Resolve contrast specification to W/L values.
+
+        Returns
+        -------
+        dict or None
+            Dict with 'window_width' and 'window_center', or None
+        """
+        # Get the contrast spec string
+        if contrast is None:
+            spec = None
+        elif isinstance(contrast, str):
+            spec = contrast
+        elif isinstance(contrast, Contrast):
+            if contrast.spec is not None:
+                spec = contrast.spec
+            elif contrast.window_width is not None and contrast.window_center is not None:
+                return {
+                    "window_width": contrast.window_width,
+                    "window_center": contrast.window_center,
+                }
+            else:
+                spec = None
+        elif isinstance(contrast, dict):
+            if "window_width" in contrast and "window_center" in contrast:
+                return contrast
+            spec = None
+        else:
+            spec = None
+
+        # Use ContrastPresets to resolve
+        try:
+            from pydicom.pixels import apply_modality_lut
+        except ImportError:
+            from pydicom.pixel_data_handlers.util import apply_modality_lut
+
+        pixel_array = None
+        if spec in (None, "auto", "embedded"):
+            try:
+                pixel_array = apply_modality_lut(self.dataset.pixel_array, self.dataset)
+            except Exception:
+                pass
+
+        return ContrastPresets.resolve_contrast(spec, self.dataset, pixel_array)
 
     def get_pixel_array(self) -> np.ndarray:
         """
@@ -327,6 +418,7 @@ class Instance:
         self,
         contrasts: list[str],
         image_width: int = 128,
+        labels: bool = True,
     ) -> Image.Image:
         """
         Render this instance with multiple contrasts in a grid.
@@ -338,6 +430,9 @@ class Instance:
 
         image_width : int, default 128
             Width of each output image in pixels
+
+        labels : bool, default True
+            If True, add slice position and contrast labels to each image.
 
         Returns
         -------
@@ -356,7 +451,7 @@ class Instance:
         images = []
         for contrast_spec in contrasts:
             try:
-                img = self.get_image(contrast=contrast_spec, image_width=image_width)
+                img = self.get_image(contrast=contrast_spec, image_width=image_width, labels=labels)
                 images.append(img)
             except Exception as e:
                 logger.warning(f"Failed to render contrast {contrast_spec}: {e}")
@@ -862,6 +957,7 @@ class SeriesIndex:
         slice_number: Optional[int] = None,
         contrast: Optional[Union[str, Contrast]] = None,
         image_width: int = 128,
+        labels: bool = True,
     ) -> Image.Image:
         """
         Render an image from this series.
@@ -883,6 +979,9 @@ class SeriesIndex:
         image_width : int, default 128
             Width of output image in pixels
 
+        labels : bool, default True
+            If True, add slice position and contrast labels to the image.
+
         Returns
         -------
         PIL.Image.Image
@@ -895,7 +994,7 @@ class SeriesIndex:
             rendering fails.
         """
         instance = self.get_instance(position=position, slice_number=slice_number)
-        return instance.get_image(contrast=contrast, image_width=image_width)
+        return instance.get_image(contrast=contrast, image_width=image_width, labels=labels)
 
     def get_images(
         self,
@@ -905,6 +1004,7 @@ class SeriesIndex:
         image_width: int = 128,
         max_workers: Optional[int] = None,
         remove_duplicates: bool = False,
+        labels: bool = True,
     ) -> list[Image.Image]:
         """
         Render multiple images at specified positions or slice numbers.
@@ -936,6 +1036,9 @@ class SeriesIndex:
             the first occurrence. Useful when you don't know the series size
             and want to avoid rendering the same image multiple times.
 
+        labels : bool, default True
+            If True, add slice position and contrast labels to each image.
+
         Returns
         -------
         list of PIL.Image.Image
@@ -957,7 +1060,7 @@ class SeriesIndex:
         )
 
         return [
-            instance.get_image(contrast=contrast, image_width=image_width)
+            instance.get_image(contrast=contrast, image_width=image_width, labels=labels)
             for instance in instances
         ]
 

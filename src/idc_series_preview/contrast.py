@@ -112,6 +112,100 @@ class ContrastPresets:
         }
 
     @classmethod
+    def parse_wl_string(cls, spec: str) -> Optional[Dict[str, float]]:
+        """
+        Parse a window/level string like '1500/500' or '1500,-500'.
+
+        Args:
+            spec: String in format 'WW/WL', 'WW,WL', or 'WW/L-NNN'
+
+        Returns:
+            Dict with 'window_width' and 'window_center', or None if not parseable
+        """
+        if "/" in spec:
+            parts = spec.split("/")
+        elif "," in spec:
+            parts = spec.split(",")
+        else:
+            return None
+
+        if len(parts) != 2:
+            return None
+
+        try:
+            ww = float(parts[0].strip())
+            wc = float(parts[1].strip())
+            return {"window_width": ww, "window_center": wc}
+        except ValueError:
+            return None
+
+    @classmethod
+    def resolve_contrast(
+        cls,
+        contrast_spec: Optional[str],
+        dataset: Optional["pydicom.Dataset"] = None,
+        pixel_array: Optional[np.ndarray] = None,
+    ) -> Optional[Dict[str, float]]:
+        """
+        Resolve a contrast specification to actual W/L values.
+
+        Args:
+            contrast_spec: Contrast specification (preset name, 'auto', 'embedded', 'WW/WL', or None)
+            dataset: DICOM dataset (needed for 'embedded' mode)
+            pixel_array: Pixel data (needed for 'auto' mode)
+
+        Returns:
+            Dict with 'window_width' and 'window_center', or None if cannot resolve
+        """
+        if contrast_spec is None:
+            # Try embedded, then auto
+            if dataset is not None:
+                ww = getattr(dataset, "WindowWidth", None)
+                wc = getattr(dataset, "WindowCenter", None)
+                if ww is not None and wc is not None:
+                    # Handle MultiValue
+                    if hasattr(ww, "__getitem__"):
+                        ww = ww[0]
+                    if hasattr(wc, "__getitem__"):
+                        wc = wc[0]
+                    return {"window_width": float(ww), "window_center": float(wc)}
+            if pixel_array is not None:
+                return cls.auto_detect(pixel_array)
+            return None
+
+        if contrast_spec == "auto":
+            if pixel_array is not None:
+                return cls.auto_detect(pixel_array)
+            return None
+
+        if contrast_spec == "embedded":
+            if dataset is not None:
+                ww = getattr(dataset, "WindowWidth", None)
+                wc = getattr(dataset, "WindowCenter", None)
+                if ww is not None and wc is not None:
+                    if hasattr(ww, "__getitem__"):
+                        ww = ww[0]
+                    if hasattr(wc, "__getitem__"):
+                        wc = wc[0]
+                    return {"window_width": float(ww), "window_center": float(wc)}
+            # Fall back to auto
+            if pixel_array is not None:
+                return cls.auto_detect(pixel_array)
+            return None
+
+        # Check if it's a preset
+        preset = cls.get_preset(contrast_spec)
+        if preset:
+            return preset
+
+        # Try to parse as WW/WL string
+        parsed = cls.parse_wl_string(contrast_spec)
+        if parsed:
+            return parsed
+
+        return None
+
+    @classmethod
     def apply_windowing(
         cls,
         pixel_array: np.ndarray,

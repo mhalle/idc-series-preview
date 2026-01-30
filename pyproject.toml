@@ -51,6 +51,12 @@ gdcm = [
 [project.scripts]
 idc-series-preview = "idc_series_preview.cli_click:cli"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/idc_series_preview"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/idc_series_preview/fonts" = "idc_series_preview/fonts"
+
 [tool.black]
 line-length = 100
 target-version = ['py39', 'py310', 'py311', 'py312']

@@ -1,10 +1,13 @@
 """Utility functions for image handling and output."""
 
+import io
 import logging
+from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from typing import List, Tuple, Optional, Union, Dict
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import pydicom
 try:
     # pydicom >=3.0
@@ -16,6 +19,188 @@ from .contrast import ContrastPresets
 
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=8)
+def get_label_font(size: int = 10) -> ImageFont.FreeTypeFont:
+    """
+    Load the bundled Oswald Bold font at the specified size.
+
+    Uses importlib.resources for reliable package resource access.
+    Results are cached to avoid repeated disk/memory access.
+
+    Parameters
+    ----------
+    size : int, default 10
+        Font size in points
+
+    Returns
+    -------
+    PIL.ImageFont.FreeTypeFont
+        The loaded font object
+    """
+    font_bytes = files("idc_series_preview.fonts").joinpath("Oswald-Bold.ttf").read_bytes()
+    return ImageFont.truetype(io.BytesIO(font_bytes), size=size)
+
+
+def add_label(
+    image: Image.Image,
+    text: str,
+    position: str = "tr",
+    font_size: int = 14,
+    padding: int = 1,
+    margin: int = 0,
+) -> Image.Image:
+    """
+    Add a text label overlay to an image.
+
+    Parameters
+    ----------
+    image : PIL.Image.Image
+        Image to add label to (modified in place if RGB, converted if grayscale)
+    text : str
+        Label text
+    position : str, default "tr"
+        Corner position: "tl" (top-left), "tr" (top-right),
+        "bl" (bottom-left), "br" (bottom-right)
+    font_size : int, default 14
+        Font size in points
+    padding : int, default 1
+        Padding inside the label background
+    margin : int, default 0
+        Margin from image edge
+
+    Returns
+    -------
+    PIL.Image.Image
+        Image with label added (RGB mode)
+    """
+    # Convert to RGB if grayscale
+    if image.mode == "L":
+        image = image.convert("RGB")
+
+    draw = ImageDraw.Draw(image)
+    font = get_label_font(font_size)
+
+    # Get text bounding box using anchor="lt" for consistent positioning
+    bbox = draw.textbbox((0, 0), text, font=font, anchor="lt")
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    # Calculate background box position based on corner
+    img_w, img_h = image.size
+    if position == "tl":
+        bg_x, bg_y = margin, margin
+    elif position == "tr":
+        bg_x = img_w - margin - text_w - padding * 2
+        bg_y = margin
+    elif position == "bl":
+        bg_x = margin
+        bg_y = img_h - margin - text_h - padding * 2
+    elif position == "br":
+        bg_x = img_w - margin - text_w - padding * 2
+        bg_y = img_h - margin - text_h - padding * 2
+    else:
+        raise ValueError(f"Invalid position: {position}. Use 'tl', 'tr', 'bl', or 'br'.")
+
+    # Draw background and text
+    bg_box = (bg_x, bg_y, bg_x + text_w + padding * 2, bg_y + text_h + padding * 2)
+    draw.rectangle(bg_box, fill="white")
+
+    # Draw text with anchor="lt" for proper alignment
+    draw.text((bg_x + padding, bg_y + padding), text, fill="black", font=font, anchor="lt")
+
+    return image
+
+
+# Minimum image width for labels (skip if smaller)
+MIN_LABEL_WIDTH = 64
+
+
+def format_position_label(position: float, axis: str = "") -> str:
+    """
+    Format normalized position as a label string.
+
+    Parameters
+    ----------
+    position : float
+        Normalized position (0.0 to 1.0)
+    axis : str, default ""
+        Axis prefix (e.g., "Z", "X", "Y", "I") or empty string for no prefix
+
+    Returns
+    -------
+    str
+        Formatted label like "Z:0.5000"
+    """
+    if axis:
+        return f"{axis}:{position:.4f}"
+    return f"{position:.4f}"
+
+
+def format_contrast_label(window_width: float, window_center: float) -> str:
+    """
+    Format window/level contrast settings as a label string.
+
+    Parameters
+    ----------
+    window_width : float
+        Window width value
+    window_center : float
+        Window center/level value
+
+    Returns
+    -------
+    str
+        Formatted label like "W1500/L-500"
+    """
+    return f"W{int(window_width)}/L{int(window_center)}"
+
+
+def add_image_labels(
+    image: Image.Image,
+    labels: Dict[str, str],
+    font_size: int = 14,
+    margin: int = 2,
+) -> Image.Image:
+    """
+    Add text labels to an image at specified corner positions.
+
+    Labels are skipped if image width is less than MIN_LABEL_WIDTH (64px).
+
+    Parameters
+    ----------
+    image : PIL.Image.Image
+        Image to add labels to
+    labels : Dict[str, str]
+        Mapping of position to label text. Valid positions are:
+        "tl" (top-left), "tr" (top-right), "bl" (bottom-left), "br" (bottom-right)
+    font_size : int, default 14
+        Font size in points
+    margin : int, default 2
+        Margin from image edge in pixels
+
+    Returns
+    -------
+    PIL.Image.Image
+        Image with labels added (RGB mode), or original if too small
+
+    Examples
+    --------
+    >>> labels = {
+    ...     "bl": format_position_label(0.5),
+    ...     "br": format_contrast_label(1500, -500),
+    ... }
+    >>> labeled_image = add_image_labels(image, labels)
+    """
+    # Skip labels on small images
+    if image.width < MIN_LABEL_WIDTH:
+        return image
+
+    for position, text in labels.items():
+        image = add_label(image, text, position=position, font_size=font_size, margin=margin)
+
+    return image
 
 
 def save_image(

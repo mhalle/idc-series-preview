@@ -557,15 +557,38 @@ def mosaic_command(args, logger):
             logger.error("No instances retrieved for series")
             return 1
 
-        from .image_utils import InstanceRenderer, MosaicRenderer
+        from .image_utils import (
+            InstanceRenderer, MosaicRenderer, add_image_labels,
+            format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+        )
+        from .contrast import ContrastPresets
 
+        labels_enabled = getattr(args, 'labels', True)
         renderer = InstanceRenderer(image_width=tile_pixel_width, window_settings=window_settings)
         images = []
-        for instance in instances:
+
+        # Resolve W/L values for labels
+        wl_values = None
+        if labels_enabled:
+            wl_values = ContrastPresets.resolve_contrast(
+                getattr(args, 'contrast', None),
+                instances[0].dataset if instances else None,
+                None,  # pixel_array computed lazily if needed
+            )
+
+        for idx, instance in enumerate(instances):
             img = renderer.render_instance(instance.dataset)
             if img is None:
                 logger.error(f"Failed to render image for instance {instance.instance_uid}")
                 return 1
+
+            # Add labels if enabled and image is large enough
+            if labels_enabled and img.width >= MIN_LABEL_WIDTH and wl_values:
+                img = add_image_labels(img, {
+                    "tl": format_position_label(instance._get_normalized_position()),
+                    "br": format_contrast_label(wl_values["window_width"], wl_values["window_center"]),
+                })
+
             images.append(img)
 
         if args.verbose:
@@ -672,7 +695,11 @@ def image_command(args, logger):
         if args.verbose:
             logger.info("Generating image...")
         try:
-            from .image_utils import InstanceRenderer
+            from .image_utils import (
+                InstanceRenderer, add_image_labels,
+                format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+            )
+            from .contrast import ContrastPresets
 
             renderer = InstanceRenderer(image_width=args.width, window_settings=window_settings)
             output_image = renderer.render_instance(instance.dataset)
@@ -683,6 +710,20 @@ def image_command(args, logger):
         if not output_image:
             logger.error("Failed to generate image")
             return 1
+
+        # Add labels if enabled
+        labels_enabled = getattr(args, 'labels', True)
+        if labels_enabled and output_image.width >= MIN_LABEL_WIDTH:
+            wl_values = ContrastPresets.resolve_contrast(
+                getattr(args, 'contrast', None),
+                instance.dataset,
+                None,
+            )
+            if wl_values:
+                output_image = add_image_labels(output_image, {
+                    "tl": format_position_label(instance._get_normalized_position()),
+                    "br": format_contrast_label(wl_values["window_width"], wl_values["window_center"]),
+                })
 
         # Save output
         if args.verbose:
@@ -886,11 +927,18 @@ def video_command(args, logger):
     ffmpeg_process = None
     frame_size = None
     frame_count = 0
-    from .image_utils import InstanceRenderer
+    from .image_utils import (
+        InstanceRenderer, add_image_labels,
+        format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+    )
+    from .contrast import ContrastPresets
     renderer = InstanceRenderer(
         image_width=args.width,
         window_settings=window_settings,
     )
+
+    labels_enabled = getattr(args, 'labels', True)
+    wl_values = None  # Will be resolved on first instance
 
     try:
         for chunk in _chunked(selection, VIDEO_FETCH_CHUNK_SIZE):
@@ -913,6 +961,20 @@ def video_command(args, logger):
                     logger.error(f"Failed to render image for instance {instance.instance_uid}")
                     _shutdown_ffmpeg_process(ffmpeg_process, logger, report_errors=False)
                     return 1
+
+                # Add labels if enabled
+                if labels_enabled and image.width >= MIN_LABEL_WIDTH:
+                    if wl_values is None:
+                        wl_values = ContrastPresets.resolve_contrast(
+                            getattr(args, 'contrast', None),
+                            instance.dataset,
+                            None,
+                        )
+                    if wl_values:
+                        image = add_image_labels(image, {
+                            "tl": format_position_label(instance._get_normalized_position()),
+                            "br": format_contrast_label(wl_values["window_width"], wl_values["window_center"]),
+                        })
 
                 frame = image.convert("RGB")
                 if frame_size is None:
@@ -1056,8 +1118,13 @@ def contrast_mosaic_command(args, logger):
                 logger.error("No DICOM instances found in requested range")
                 return 1
 
-        from .image_utils import InstanceRenderer, MosaicRenderer
+        from .image_utils import (
+            InstanceRenderer, MosaicRenderer, add_image_labels,
+            format_position_label, format_contrast_label, MIN_LABEL_WIDTH,
+        )
 
+        labels_enabled = getattr(args, 'labels', True)
+        total_slices = len(instances)
         tile_rows = len(instances)
         tile_columns = num_contrasts
         if tile_rows == 0:
@@ -1102,6 +1169,25 @@ def contrast_mosaic_command(args, logger):
                         f"Failed to render instance {inst_idx+1} contrast {contrast_str}"
                     )
                     return 1
+
+                # Add labels if enabled
+                if labels_enabled and img.width >= MIN_LABEL_WIDTH:
+                    # Resolve W/L values from contrast settings
+                    if isinstance(contrast_settings, dict):
+                        wl_values = contrast_settings
+                    else:
+                        # "auto" or "embedded" - resolve from dataset/pixels
+                        wl_values = ContrastPresets.resolve_contrast(
+                            contrast_settings,
+                            dataset=instance.dataset,
+                            pixel_array=instance.dataset.pixel_array if hasattr(instance.dataset, 'pixel_array') else None,
+                        )
+                    if wl_values:
+                        img = add_image_labels(img, {
+                            "tl": format_position_label(instance._get_normalized_position()),
+                            "br": format_contrast_label(wl_values['window_width'], wl_values['window_center']),
+                        })
+
                 image_grid.append(img)
 
         generator = MosaicRenderer(

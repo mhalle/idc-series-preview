@@ -43,8 +43,9 @@ def common_options(
     *,
     include_contrast: bool = True,
     include_quality: bool = True,
+    include_labels: bool = True,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Decorator adding shared root/quality/verbose options."""
+    """Decorator adding shared root/quality/verbose/labels options."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         func = click.option(
@@ -53,6 +54,13 @@ def common_options(
             is_flag=True,
             help="Enable detailed logging",
         )(func)
+        if include_labels:
+            func = click.option(
+                "--no-labels",
+                is_flag=True,
+                default=False,
+                help="Disable slice position and contrast labels on images.",
+            )(func)
         if include_quality:
             func = click.option(
                 "-q",
@@ -172,6 +180,7 @@ def mosaic_click(
     contrast: Optional[str],
     quality: int,
     verbose: bool,
+    no_labels: bool,
     start: float,
     end: float,
     samples: int,
@@ -193,6 +202,7 @@ def mosaic_click(
         contrast=contrast,
         quality=quality,
         verbose=verbose,
+        labels=not no_labels,
         start=start,
         end=end,
         samples=samples,
@@ -240,6 +250,7 @@ def image_click(
     contrast: Optional[str],
     quality: int,
     verbose: bool,
+    no_labels: bool,
     cache_dir: Optional[str],
     no_cache: bool,
     position: float,
@@ -256,6 +267,7 @@ def image_click(
         contrast=contrast,
         quality=quality,
         verbose=verbose,
+        labels=not no_labels,
         cache_dir=cache_dir,
         no_cache=no_cache,
         position=position,
@@ -406,6 +418,7 @@ def video_click(
     width: Optional[int],
     contrast: Optional[str],
     verbose: bool,
+    no_labels: bool,
     cache_dir: Optional[str],
     no_cache: bool,
     start: float,
@@ -424,6 +437,7 @@ def video_click(
         width=width,
         contrast=contrast,
         verbose=verbose,
+        labels=not no_labels,
         cache_dir=cache_dir,
         no_cache=no_cache,
         start=start,
@@ -503,6 +517,7 @@ def contrast_mosaic_click(
     root: str,
     quality: int,
     verbose: bool,
+    no_labels: bool,
     cache_dir: Optional[str],
     no_cache: bool,
     contrast: tuple[str, ...],
@@ -524,6 +539,7 @@ def contrast_mosaic_click(
         root=root,
         quality=quality,
         verbose=verbose,
+        labels=not no_labels,
         cache_dir=cache_dir,
         no_cache=no_cache,
         contrast=list(contrast),
