@@ -13,6 +13,16 @@ metadata:
 
 CLI tools for previewing and visualizing DICOM imaging series from the NCI Imaging Data Commons (IDC) and other sources.
 
+## Companion Skill: idc-skill
+
+This skill is designed to work with the **idc-skill**, which provides:
+- Information about IDC collections and studies
+- Mapping from SeriesInstanceUIDs to series metadata
+- Access to `crdc_series_uuid` values required by this tool
+- Storage locations for DICOM instances
+
+Use idc-skill to discover and query series, then use idc-series-preview to visualize them.
+
 ## Download
 
 Latest release:
